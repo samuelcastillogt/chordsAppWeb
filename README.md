@@ -17,6 +17,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 
 Open `http://localhost:3000`.
 
+
 ## Main Flow
 
 1. Pick an active chord and tonality in the hero panel.
