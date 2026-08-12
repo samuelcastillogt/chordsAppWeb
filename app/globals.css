@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-canvas text-ink font-sans;
+  font-variation-settings: "wght" 460;
+}
+
+.node circle {
+  @apply cursor-pointer transition-all duration-200;
+}
+
+.node:hover circle {
+  @apply brightness-125;
+}
+
+.link {
+  @apply transition-all duration-200;
+}
+
+::selection {
+  background: #c9b4fa;
+  color: #1b1938;
+}

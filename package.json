@@ -1,0 +1,32 @@
+{
+  "name": "chordweaver-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.56.0",
+    "d3": "^7.9.0",
+    "next": "^14.2.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "tone": "^15.0.4"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.0.0",
+    "@types/d3": "^7.4.0",
+    "@types/node": "^26.2.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}

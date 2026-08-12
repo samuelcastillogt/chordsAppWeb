@@ -1,0 +1,13 @@
+
+> chordweaver-frontend@0.1.0 dev
+> next dev
+
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3000
+  - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 1166ms
+ ○ Compiling / ...
+ ✓ Compiled / in 609ms (1685 modules)
+ HEAD / 200 in 723ms
