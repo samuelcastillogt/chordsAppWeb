@@ -1,5 +1,11 @@
-import Explorer from "@/app/explorer/page"
+import { Suspense } from "react"
+
+import Analyzer from "@/components/Analyzer"
 
 export default function Home() {
-  return <Explorer />
+  return (
+    <Suspense>
+      <Analyzer />
+    </Suspense>
+  )
 }

@@ -23,15 +23,23 @@ NEXT_PUBLIC_API_URL || http://localhost:8000
 
 The explorer uses these backend endpoints:
 
-- `GET /api/v1/chords`: loads the full chord catalog.
-- `GET /api/v1/chords/{id}`: loads metadata for the selected chord.
+- `GET /health`: reports whether accounts are enabled on the server (`accounts`).
+- `GET /api/v1/chords`: loads the 192-chord catalog (`notes`, `triad`, `family`).
+- `GET /api/v1/chords/{id}`: loads metadata for the selected chord (any spelling: `Bb`, `SOLm`).
+- `POST /api/v1/chords/parse`: normalises pasted chord symbols in the analyzer and deep links.
 - `GET /api/v1/chords/{id}/connections`: loads recommended next chords for the selected tonality.
-- `POST /api/v1/analyze`: analyzes progression tension.
+- `POST /api/v1/analyze`: key detection, roman numerals, functions, substitutions and tension curve.
 - `POST /api/v1/tablature`: generates deterministic guitar tablature for the current progression.
-- `GET /api/v1/progressions`: lists saved progressions.
-- `POST /api/v1/progressions`: creates a progression.
-- `PUT /api/v1/progressions/{id}`: updates the selected saved progression.
-- `DELETE /api/v1/progressions/{id}`: deletes a saved progression.
+- `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `GET /api/v1/auth/me`: accounts (JWT Bearer).
+- `GET /api/v1/progressions`: lists the signed-in user's progressions.
+- `POST /api/v1/progressions`: creates a progression (requires login).
+- `GET /api/v1/progressions/{id}`: loads an owned or public (shared) progression.
+- `PUT /api/v1/progressions/{id}`: updates a progression; `{"isPublic": true}` shares it.
+- `DELETE /api/v1/progressions/{id}`: deletes an owned progression.
+
+## Analyzer (home page)
+
+`components/Analyzer.tsx` is the entry point of the product. The submitted text is split with `splitChordInput`, normalised with `/chords/parse` (unknown tokens such as `x2` or `N.C.` are listed as ignored) and analysed with `/analyze`. The whole pipeline is a React Query query keyed by the submitted text and key, so deep links (`?chords=`), example buttons and substitution clicks all reuse the same code path and cache. Each degree card can replace its chord with a suggested substitution, which rewrites the input and re-runs the analysis.
 
 ## Screen Architecture
 
@@ -122,21 +130,19 @@ The frontend now handles these common breakpoints:
 
 The layout follows the product design file:
 
-- Indigo hero with violet/teal atmospheric gradients.
-- White and off-white content sections.
-- Deep-teal closing CTA band.
-- Rounded pills only in the hero.
-- Rounded-rectangle body CTAs.
-- Warm grey text rather than pure black.
-- Minimum 44px touch targets for primary controls.
+- Night surfaces (`thread-bg`) for heros and the sticky header; paper (`canvas-soft`) for reading.
+- Harmonic-function colours (`fn-tonic`, `fn-subdominant`, `fn-dominant`, `fn-borrowed`, `fn-chromatic`) shared with the mobile app.
+- Fraunces for display, Inter for UI, JetBrains Mono for chord symbols and tablature (loaded with `next/font`).
+- Warm ink text rather than pure black; golden focus ring.
+- Minimum 44px touch targets for primary controls; no page-level horizontal scroll at 375px.
 
 ## Known Limitations
 
-- Saved progressions depend on the backend implementation. The current local backend stores them in memory, so data is lost after backend restart.
+- Saved progressions are persisted per user in the API database. On Vercel they only survive restarts when `DATABASE_URL` points to PostgreSQL; without `SECRET_KEY` the server disables accounts and the UI hides saving.
 - Playback uses simple synthesized triads, not sampled instruments or inversions.
 - The SVG graph is redrawn on relevant data changes instead of using fine-grained D3 updates. This is acceptable for the current catalog size.
 - Confirmation uses `window.confirm`; a custom modal would provide stronger visual consistency if destructive actions become more prominent.
-- No browser E2E suite exists yet. Current automated coverage is helper-level plus Next production build.
+- No browser E2E suite exists yet. Current automated coverage is helper-level (`lib/music.ts`) plus Next production build; the analyzer, auth and sharing flows were verified manually against a local API.
 
 ## Verification
 

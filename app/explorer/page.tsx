@@ -1,12 +1,16 @@
 "use client"
 
-import { useState } from "react"
+import Link from "next/link"
+import { useSearchParams } from "next/navigation"
+import { Suspense, useEffect, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import ChordGraph from "@/components/ChordGraph"
 import ChordSelector from "@/components/ChordSelector"
-import { del, get, getApiBaseUrl, post, put } from "@/lib/api"
+import GuitarFretboard from "@/components/GuitarFretboard"
+import { appUrl, del, get, getApiBaseUrl, post, put } from "@/lib/api"
+import { useAuth } from "@/lib/auth"
 import { categoryColor, connectionLabel, noteToFrequency } from "@/lib/music"
-import { AnalyzeResponse, Chord, ConnectionsResponse, Progression, TablatureResponse } from "@/types"
+import { AnalyzeResponse, Chord, ConnectionsResponse, ParsedChord, Progression, TablatureResponse } from "@/types"
 
 const DEFAULT_PROGRESSION = ["C", "G7", "Am", "F"]
 
@@ -27,6 +31,19 @@ function playChord(notes: string[], startAt: number, context: AudioContext) {
     oscillator.start(startAt)
     oscillator.stop(startAt + 0.9)
   })
+}
+
+function playNote(note: string, startAt: number, context: AudioContext) {
+  const oscillator = context.createOscillator()
+  const gain = context.createGain()
+  oscillator.type = "triangle"
+  oscillator.frequency.value = noteToFrequency(note, 4)
+  gain.gain.setValueAtTime(0.0001, startAt)
+  gain.gain.exponentialRampToValueAtTime(0.18, startAt + 0.03)
+  gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.36)
+  oscillator.connect(gain).connect(context.destination)
+  oscillator.start(startAt)
+  oscillator.stop(startAt + 0.38)
 }
 
 function filenameFromTitle(title: string, extension: string) {
@@ -73,13 +90,25 @@ function downloadTablaturePng(tablature: TablatureResponse) {
   }, "image/png")
 }
 
-export default function Explorer() {
+export default function ExplorerPage() {
+  return (
+    <Suspense>
+      <Explorer />
+    </Suspense>
+  )
+}
+
+function Explorer() {
   const queryClient = useQueryClient()
+  const searchParams = useSearchParams()
+  const { user, accountsEnabled, openDialog } = useAuth()
+  const loadedFromUrl = useRef(false)
   const [selectedChord, setSelectedChord] = useState("C")
   const [tonality, setTonality] = useState("C")
-  const [progressionName, setProgressionName] = useState("Nueva progresion")
+  const [progressionName, setProgressionName] = useState("Nueva progresión")
   const [progression, setProgression] = useState<string[]>(DEFAULT_PROGRESSION)
-  const [mode, setMode] = useState<"connections" | "mandala">("connections")
+  const [mode, setMode] = useState<"connections" | "mandala" | "fretboard">("connections")
+  const [activeNotes, setActiveNotes] = useState<string[]>([])
   const [selectedProgressionId, setSelectedProgressionId] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -103,13 +132,59 @@ export default function Explorer() {
   })
 
   const { data: progressionsData, error: progressionsError } = useQuery<{ progressions: Progression[]; total: number }>({
-    queryKey: ["progressions"],
+    queryKey: ["progressions", user?.id],
     queryFn: () => get<{ progressions: Progression[]; total: number }>("/api/v1/progressions"),
+    enabled: !!user,
   })
+
+  // Deep links: ?chords=Bm,G,D,A&key=Bm (from the analyzer or the songbook) or ?p=<shared id>.
+  useEffect(() => {
+    if (loadedFromUrl.current) return
+    loadedFromUrl.current = true
+    const sharedId = searchParams.get("p")
+    const chordParam = searchParams.get("chords")
+    const keyParam = searchParams.get("key")
+    if (keyParam) setTonality(keyParam)
+    if (sharedId) {
+      get<Progression>(`/api/v1/progressions/${encodeURIComponent(sharedId)}`)
+        .then(shared => {
+          loadProgression(shared)
+          if (!shared.isOwner) setSelectedProgressionId(null)
+        })
+        .catch(() => setErrorMessage("Esa progresión no existe o no es pública."))
+    } else if (chordParam) {
+      post<{ results: ParsedChord[] }>("/api/v1/chords/parse", { symbols: chordParam.split(",").filter(Boolean) })
+        .then(({ results }) => {
+          const ids = results.map(result => result.chord).filter((id): id is string => Boolean(id))
+          if (ids.length) {
+            setProgression(ids)
+            setSelectedChord(ids[ids.length - 1])
+            setProgressionName("Progresión importada")
+          }
+        })
+        .catch(() => setErrorMessage("No se pudieron leer los acordes del enlace."))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
 
   const analyzeMutation = useMutation({
     mutationFn: () => post<AnalyzeResponse>("/api/v1/analyze", { chords: progression, tonality }),
-    onError: error => setErrorMessage(error instanceof Error ? error.message : "No se pudo analizar la progresion"),
+    onError: error => setErrorMessage(error instanceof Error ? error.message : "No se pudo analizar la progresión"),
+  })
+
+  const shareMutation = useMutation({
+    mutationFn: (saved: Progression) => put<Progression>(`/api/v1/progressions/${saved.id}`, { isPublic: true }),
+    onSuccess: async saved => {
+      const link = appUrl(`/explorer?p=${saved.id}`)
+      try {
+        await navigator.clipboard.writeText(link)
+        setMessage(`Enlace copiado: ${link}`)
+      } catch {
+        setMessage(`Comparte este enlace: ${link}`)
+      }
+      queryClient.invalidateQueries({ queryKey: ["progressions"] })
+    },
+    onError: error => setErrorMessage(error instanceof Error ? error.message : "No se pudo compartir"),
   })
 
   const saveMutation = useMutation({
@@ -121,11 +196,11 @@ export default function Explorer() {
     },
     onSuccess: saved => {
       setSelectedProgressionId(saved.id)
-      setMessage(`Progresion guardada: ${saved.name}`)
+      setMessage(`Progresión guardada: ${saved.name}`)
       setErrorMessage(null)
       queryClient.invalidateQueries({ queryKey: ["progressions"] })
     },
-    onError: error => setErrorMessage(error instanceof Error ? error.message : "No se pudo guardar la progresion"),
+    onError: error => setErrorMessage(error instanceof Error ? error.message : "No se pudo guardar la progresión"),
   })
 
   const tablatureMutation = useMutation({
@@ -142,12 +217,12 @@ export default function Explorer() {
     onSuccess: () => {
       setSelectedProgressionId(null)
       setProgression(DEFAULT_PROGRESSION)
-      setProgressionName("Nueva progresion")
-      setMessage("Progresion eliminada")
+      setProgressionName("Nueva progresión")
+      setMessage("Progresión eliminada")
       setErrorMessage(null)
       queryClient.invalidateQueries({ queryKey: ["progressions"] })
     },
-    onError: error => setErrorMessage(error instanceof Error ? error.message : "No se pudo eliminar la progresion"),
+    onError: error => setErrorMessage(error instanceof Error ? error.message : "No se pudo eliminar la progresión"),
   })
 
   const addChordToProgression = (chord: string) => {
@@ -155,7 +230,7 @@ export default function Explorer() {
     tablatureMutation.reset()
     setProgression(current => [...current, chord])
     setSelectedChord(chord)
-    setMessage(`${chord} agregado a tu progresion`)
+    setMessage(`${chord} agregado a tu progresión`)
   }
 
   const removeChordAt = (index: number) => {
@@ -172,7 +247,7 @@ export default function Explorer() {
     setSelectedChord(saved.chords[0] ?? "C")
     analyzeMutation.reset()
     tablatureMutation.reset()
-    setMessage(`Progresion cargada: ${saved.name}`)
+    setMessage(`Progresión cargada: ${saved.name}`)
     setErrorMessage(null)
   }
 
@@ -183,19 +258,41 @@ export default function Explorer() {
     const context = new AudioCtor()
     progression.forEach((chordId, index) => {
       const chord = chords.find(item => item.id === chordId)
-      if (chord) playChord(chord.triad, context.currentTime + index * 1.05, context)
+      if (chord) {
+        const delay = index * 1050
+        playChord(chord.notes ?? chord.triad, context.currentTime + index * 1.05, context)
+        window.setTimeout(() => {
+          setSelectedChord(chord.id)
+          setActiveNotes(chord.notes ?? chord.triad)
+        }, delay)
+        window.setTimeout(() => setActiveNotes([]), delay + 900)
+      }
     })
+  }
+
+  const playSelectedChord = () => {
+    const chord = targetChord ?? chords.find(item => item.id === selectedChord)
+    const audioWindow = window as AudioWindow
+    const AudioCtor = audioWindow.AudioContext || audioWindow.webkitAudioContext
+    if (!AudioCtor || !chord) return
+    const context = new AudioCtor()
+    chord.triad.forEach((note, index) => {
+      playNote(note, context.currentTime + index * 0.42, context)
+      window.setTimeout(() => setActiveNotes([note]), index * 420)
+    })
+    window.setTimeout(() => setActiveNotes([]), chord.triad.length * 420 + 180)
   }
 
   const analysis = analyzeMutation.data?.analysis
   const selectedConnections = connectionsData?.connections ?? []
   const canAnalyze = progression.length >= 2 && !analyzeMutation.isPending
   const canSave = progression.length > 0 && progressionName.trim().length > 0 && !saveMutation.isPending
+  const save = () => (user ? saveMutation.mutate() : openDialog())
   const canGenerateTablature = progression.length > 0 && !tablatureMutation.isPending
   const tablature = tablatureMutation.data
 
   const deleteProgression = (id: string) => {
-    if (window.confirm("Esta progresion se eliminara. Deseas continuar?")) {
+    if (window.confirm("Esta progresión se eliminará. ¿Deseas continuar?")) {
       deleteMutation.mutate(id)
     }
   }
@@ -205,7 +302,7 @@ export default function Explorer() {
       <main className="flex min-h-screen items-center justify-center bg-canvas-soft p-6">
         <section className="max-w-lg rounded-lg border border-hairline bg-canvas p-8 text-center shadow-sm">
           <h1 className="text-[28px] font-[540] tracking-[-0.63px] text-ink">No se pudo conectar con la API</h1>
-          <p className="mt-3 text-sm text-ink-mute">Verifica que el backend este corriendo en {getApiBaseUrl()}.</p>
+          <p className="mt-3 text-sm text-ink-mute">Verifica que el backend esté corriendo en {getApiBaseUrl()}.</p>
         </section>
       </main>
     )
@@ -213,16 +310,17 @@ export default function Explorer() {
 
   return (
     <main className="min-h-screen bg-canvas text-ink">
-      <section className="relative overflow-hidden bg-primary text-on-primary">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_74%_18%,#c9b4fa_0,rgba(201,180,250,0.38)_18%,transparent_42%),radial-gradient(circle_at_88%_66%,#155555_0,rgba(21,85,85,0.26)_20%,transparent_46%),linear-gradient(135deg,#1b1938_0%,#0e0c1f_100%)]" />
+      <section className="thread-bg relative overflow-hidden text-on-primary">
         <div className="relative mx-auto grid max-w-6xl gap-12 px-6 py-16 md:grid-cols-[1.05fr_0.95fr] md:py-24">
           <div>
             <p className="text-xs font-[540] uppercase tracking-[0.32em] text-on-dark-mute">ChordWeaver</p>
-            <h1 className="mt-5 max-w-3xl text-[42px] font-[540] leading-[0.96] tracking-[-1px] md:text-[64px]">Encuentra el siguiente acorde sin perderte en teoria.</h1>
-            <p className="mt-6 max-w-xl text-lg font-[540] leading-7 tracking-[-0.135px] text-on-dark-mute">Elige un acorde base, mira las opciones recomendadas y arma una progresion que puedas escuchar, analizar y guardar.</p>
+            <h1 className="mt-5 max-w-3xl text-[42px] font-[540] leading-[0.96] tracking-[-1px] md:text-[64px]">Encuentra el siguiente acorde sin perderte en teoría.</h1>
+            <p className="mt-6 max-w-xl text-lg font-[540] leading-7 tracking-[-0.135px] text-on-dark-mute">Elige un acorde base, mira las opciones recomendadas y arma una progresión que puedas escuchar, analizar y guardar.</p>
             <div className="mt-8 flex flex-wrap gap-3">
               <button type="button" onClick={() => addChordToProgression(selectedChord)} className="min-h-11 rounded-full bg-surface-violet-soft px-5 py-3 text-base font-bold text-primary transition hover:bg-white">Agregar acorde base</button>
               <button type="button" onClick={playProgression} className="min-h-11 rounded-full border border-hairline-dark px-5 py-3 text-base font-bold text-on-primary transition hover:bg-white/10">Escuchar ejemplo</button>
+              <Link href="/fretboard" className="inline-flex min-h-11 items-center rounded-full border border-hairline-dark px-5 py-3 text-base font-bold text-on-primary transition hover:bg-white/10">Mástil interactivo</Link>
+              <Link href="/piano" className="inline-flex min-h-11 items-center rounded-full border border-hairline-dark px-5 py-3 text-base font-bold text-on-primary transition hover:bg-white/10">Piano interactivo</Link>
             </div>
           </div>
           <div className="rounded-xl border border-hairline-dark bg-primary/70 p-6 shadow-2xl">
@@ -231,9 +329,10 @@ export default function Explorer() {
               <ChordSelector label="Tonalidad" chords={chords.filter(chord => chord.type === "major" || chord.type === "minor")} value={tonality} onChange={setTonality} />
               <label className="flex flex-col gap-1 text-sm text-on-dark-mute">
                 Vista
-                <select value={mode} onChange={event => setMode(event.target.value as "connections" | "mandala")} className="min-h-11 rounded-md border border-hairline-dark bg-primary px-3 py-2 text-on-primary outline-none focus:border-surface-violet-soft focus:ring-2 focus:ring-surface-violet-soft/30">
+                <select value={mode} onChange={event => setMode(event.target.value as "connections" | "mandala" | "fretboard")} className="min-h-11 rounded-md border border-hairline-dark bg-primary px-3 py-2 text-on-primary outline-none focus:border-surface-violet-soft focus:ring-2 focus:ring-surface-violet-soft/30">
                 <option value="connections">Mapa simple recomendado</option>
                 <option value="mandala">Mandala completo</option>
+                <option value="fretboard">Mástil de intervalos</option>
                 </select>
               </label>
             </div>
@@ -255,16 +354,18 @@ export default function Explorer() {
         <div className="rounded-lg border border-hairline bg-canvas p-8 shadow-sm">
           <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
-              <p className="text-xs font-[540] uppercase tracking-[0.2em] text-ink-mute">Mapa armonico</p>
-              <h2 className="mt-2 text-[48px] font-[460] leading-[0.96] tracking-[-1.32px] text-ink">{mode === "mandala" ? "Todos los acordes" : `Opciones para ${selectedChord}`}</h2>
+              <p className="text-xs font-[540] uppercase tracking-[0.2em] text-ink-mute">Mapa armónico</p>
+              <h2 className="mt-2 text-[48px] font-[460] leading-[0.96] tracking-[-1.32px] text-ink">{mode === "mandala" ? "Todos los acordes" : mode === "fretboard" ? `Intervalos de ${selectedChord}` : `Opciones para ${selectedChord}`}</h2>
             </div>
-            <p className="max-w-sm text-sm leading-6 text-ink-mute">{mode === "mandala" ? "Las flechas muestran la direccion sugerida. Doble flecha indica ida y vuelta; punteado son relativos y lineas dobles son paralelos." : "Verde suena mas natural; rojo crea mas tension. Haz hover para ver el intervalo."}</p>
+            <p className="max-w-sm text-sm leading-6 text-ink-mute">{mode === "mandala" ? "Las flechas muestran la direccion sugerida. Doble flecha indica ida y vuelta; punteado son relativos y lineas dobles son paralelos." : mode === "fretboard" ? "Cada punto marca un intervalo de la triada sobre el mastil. Solo se ilumina mientras suena." : "Verde suena más natural; rojo crea más tensión. Haz hover para ver el intervalo."}</p>
           </div>
           <div className="rounded-md bg-canvas-soft p-3">
             {connectionsError ? (
               <div className="flex min-h-[420px] items-center justify-center rounded-md border border-hairline bg-canvas p-6 text-center text-ink-mute">No se pudieron cargar las conexiones. Revisa que el backend siga activo.</div>
             ) : chordsLoading || connectionsLoading ? (
               <div className="flex min-h-[420px] items-center justify-center text-ink-mute">Cargando conexiones...</div>
+            ) : mode === "fretboard" ? (
+              <GuitarFretboard chord={targetChord ?? null} activeNotes={activeNotes} onPlay={playSelectedChord} />
             ) : (
               <ChordGraph sourceChord={targetChord ?? null} connections={selectedConnections} chords={chords} mode={mode} onSelectChord={setSelectedChord} />
             )}
@@ -273,7 +374,7 @@ export default function Explorer() {
 
         <aside className="rounded-lg border border-hairline bg-canvas-soft p-6">
           <p className="text-xs font-[540] uppercase tracking-[0.2em] text-ink-mute">Sugerencias</p>
-          <h2 className="mt-2 text-[28px] font-[540] leading-[1.14] tracking-[-0.63px]">Que puede seguir</h2>
+          <h2 className="mt-2 text-[28px] font-[540] leading-[1.14] tracking-[-0.63px]">Qué puede seguir</h2>
           <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-ink-mute">
             {mode === "mandala" ? (
               <>
@@ -303,7 +404,7 @@ export default function Explorer() {
                     <span><strong>{conn.target}</strong><span className="ml-2 text-ink-mute">{connectionLabel(conn.category)}</span></span>
                     <span className="font-mono" style={{ color: categoryColor(conn.category) }}>{conn.score}</span>
                   </button>
-                  <button type="button" onClick={() => addChordToProgression(conn.target)} className="mt-2 min-h-9 rounded-md bg-primary px-3 text-xs font-bold text-on-primary hover:bg-primary-deep">Agregar a mi progresion</button>
+                  <button type="button" onClick={() => addChordToProgression(conn.target)} className="mt-2 min-h-9 rounded-md bg-primary px-3 text-xs font-bold text-on-primary hover:bg-primary-deep">Agregar a mi progresión</button>
                 </div>
               </li>
             ))}
@@ -314,7 +415,7 @@ export default function Explorer() {
       <section className="bg-canvas-soft">
         <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-6 py-16 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
           <div className="rounded-lg border border-hairline bg-canvas p-8">
-            <p className="text-xs font-[540] uppercase tracking-[0.2em] text-ink-mute">Tu progresion</p>
+            <p className="text-xs font-[540] uppercase tracking-[0.2em] text-ink-mute">Tu progresión</p>
             <div className="mt-3 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
               <label className="flex flex-1 flex-col gap-2 text-sm text-ink-mute">
                 Ponle nombre
@@ -322,14 +423,14 @@ export default function Explorer() {
               </label>
               <div className="flex flex-wrap gap-2">
                 <button type="button" onClick={playProgression} disabled={progression.length === 0} className="min-h-11 rounded-md border border-hairline-dark bg-canvas px-5 text-base font-bold text-ink transition hover:bg-canvas-soft disabled:opacity-50">Escuchar</button>
-                <button type="button" onClick={() => analyzeMutation.mutate()} disabled={!canAnalyze} className="min-h-11 rounded-md border border-hairline-dark bg-canvas px-5 text-base font-bold text-ink transition hover:bg-canvas-soft disabled:opacity-50">Ver tension</button>
-                <button type="button" onClick={() => saveMutation.mutate()} disabled={!canSave} className="min-h-11 rounded-md bg-primary px-5 text-base font-bold text-on-primary transition hover:bg-primary-deep disabled:opacity-50">Guardar</button>
+                <button type="button" onClick={() => analyzeMutation.mutate()} disabled={!canAnalyze} className="min-h-11 rounded-md border border-hairline-dark bg-canvas px-5 text-base font-bold text-ink transition hover:bg-canvas-soft disabled:opacity-50">Ver tensión</button>
+                <button type="button" onClick={save} disabled={!canSave || !accountsEnabled} title={accountsEnabled ? undefined : "Las cuentas no están disponibles en este servidor"} className="min-h-11 rounded-md bg-primary px-5 text-base font-bold text-on-primary transition hover:bg-primary-deep disabled:opacity-50">Guardar</button>
                 <button type="button" onClick={() => tablatureMutation.mutate()} disabled={!canGenerateTablature} className="min-h-11 rounded-md bg-surface-teal-deep px-5 text-base font-bold text-on-primary transition hover:bg-surface-teal-mid disabled:opacity-50">{tablatureMutation.isPending ? "Generando..." : "Generar tablatura"}</button>
               </div>
             </div>
             <p className="mt-3 text-sm text-ink-mute">Tip: toca cualquier chip para quitarlo. Usa las sugerencias para agregar acordes sin buscar en el selector.</p>
             <div className="mt-6 flex min-h-20 flex-wrap gap-2 rounded-md border border-dashed border-hairline p-4">
-              {progression.length === 0 && <span className="text-sm text-ink-mute">Tu progresion esta vacia. Agrega un acorde desde el mapa o las sugerencias.</span>}
+              {progression.length === 0 && <span className="text-sm text-ink-mute">Tu progresión está vacía. Agrega un acorde desde el mapa o las sugerencias.</span>}
               {progression.map((chord, index) => (
                 <button key={`${chord}-${index}`} type="button" onClick={() => removeChordAt(index)} className="min-h-11 rounded-full border border-hairline bg-canvas px-4 font-semibold text-ink transition hover:border-hairline-dark" aria-label={`Quitar acorde ${chord}`}>{chord}</button>
               ))}
@@ -339,15 +440,25 @@ export default function Explorer() {
           </div>
 
           <div className="rounded-lg border border-hairline bg-canvas p-8">
-            <p className="text-xs font-[540] uppercase tracking-[0.2em] text-ink-mute">Library</p>
+            <p className="text-xs font-[540] uppercase tracking-[0.2em] text-ink-mute">Biblioteca</p>
             <h2 className="mt-2 text-[28px] font-[540] leading-[1.14] tracking-[-0.63px]">Progresiones guardadas</h2>
             <ul className="mt-5 space-y-2 text-sm">
-              {progressionsError && <li className="rounded-md bg-canvas-soft p-3 text-ink-mute">No se pudo cargar la libreria guardada.</li>}
-              {!progressionsError && (progressionsData?.progressions ?? []).length === 0 && <li className="rounded-md bg-canvas-soft p-3 text-ink-mute">Todavia no hay progresiones guardadas.</li>}
+              {!accountsEnabled && <li className="rounded-md bg-canvas-soft p-3 text-ink-mute">Las cuentas aún no están activas en este servidor.</li>}
+              {accountsEnabled && !user && (
+                <li className="rounded-md bg-canvas-soft p-4 text-ink-mute">
+                  Crea una cuenta gratis para guardar tus progresiones y compartirlas con un enlace.
+                  <button type="button" onClick={openDialog} className="mt-3 block min-h-10 rounded-md bg-primary px-4 font-bold text-on-primary hover:bg-primary-deep">Crear cuenta</button>
+                </li>
+              )}
+              {user && progressionsError && <li className="rounded-md bg-canvas-soft p-3 text-ink-mute">No se pudo cargar tu biblioteca.</li>}
+              {user && !progressionsError && (progressionsData?.progressions ?? []).length === 0 && <li className="rounded-md bg-canvas-soft p-3 text-ink-mute">Todavía no tienes progresiones guardadas.</li>}
               {(progressionsData?.progressions ?? []).map(saved => (
                 <li key={saved.id} className="flex items-center justify-between gap-2 rounded-md bg-canvas-soft p-3">
-                  <button type="button" onClick={() => loadProgression(saved)} className="text-left"><strong>{saved.name}</strong><span className="block text-ink-mute">{saved.chords.join(" - ")}</span></button>
-                  <button type="button" onClick={() => deleteProgression(saved.id)} className="rounded-md border border-hairline-dark px-3 py-2 text-xs font-semibold text-ink hover:bg-canvas">Eliminar</button>
+                  <button type="button" onClick={() => loadProgression(saved)} className="text-left"><strong>{saved.name}</strong><span className="block font-mono text-ink-mute">{saved.chords.join(" - ")}</span></button>
+                  <span className="flex shrink-0 gap-1">
+                    <button type="button" onClick={() => shareMutation.mutate(saved)} className="rounded-md border border-hairline px-3 py-2 text-xs font-semibold text-ink hover:bg-canvas">{saved.isPublic ? "Copiar enlace" : "Compartir"}</button>
+                    <button type="button" onClick={() => deleteProgression(saved.id)} className="rounded-md border border-hairline px-3 py-2 text-xs font-semibold text-ink hover:bg-canvas">Eliminar</button>
+                  </span>
                 </li>
               ))}
             </ul>
@@ -360,11 +471,14 @@ export default function Explorer() {
           <div className="rounded-lg border border-hairline bg-canvas p-8">
             <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
               <div>
-                <p className="text-xs font-[540] uppercase tracking-[0.2em] text-ink-mute">Analysis</p>
-                <h2 className="mt-2 text-[48px] font-[460] leading-[0.96] tracking-[-1.32px]">Curva de tension</h2>
+                <p className="text-xs font-[540] uppercase tracking-[0.2em] text-ink-mute">Análisis · {analysis.key?.label}</p>
+                <h2 className="mt-2 text-[48px] font-[460] leading-[0.96] tracking-[-1.32px]">Curva de tensión</h2>
                 <p className="mt-3 text-sm text-ink-mute">Score promedio: {analysis.averageScore}</p>
               </div>
-              <p className="max-w-md text-sm leading-6 text-ink-mute">{analysis.suggestions.join(" ")}</p>
+              <div className="max-w-md text-sm leading-6 text-ink-mute">
+                <p>{analysis.suggestions.join(" ")}</p>
+                <Link href={`/?chords=${encodeURIComponent(progression.join(","))}&key=${encodeURIComponent(tonality)}`} className="mt-2 inline-block font-bold text-ink underline underline-offset-4">Ver grados y sustituciones</Link>
+              </div>
             </div>
             <div className="mt-8 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
               {analysis.tensionCurve.map(point => (
@@ -381,8 +495,8 @@ export default function Explorer() {
 
       <section className="mx-auto max-w-6xl px-6 pb-16">
         <div className="rounded-lg bg-surface-teal-deep p-10 text-on-primary md:p-16">
-          <h2 className="max-w-2xl text-[28px] font-[540] leading-[1.14] tracking-[-0.63px]">Cada progresion termina resolviendo en una decision: guardar, escuchar o volver a explorar.</h2>
-          <button type="button" onClick={() => analyzeMutation.mutate()} disabled={!canAnalyze} className="mt-8 min-h-11 rounded-md bg-canvas px-5 text-base font-bold text-surface-teal-deep transition hover:bg-canvas-soft disabled:opacity-50">Analizar progresion actual</button>
+          <h2 className="max-w-2xl text-[28px] font-[540] leading-[1.14] tracking-[-0.63px]">Cada progresión termina resolviendo en una decision: guardar, escuchar o volver a explorar.</h2>
+          <button type="button" onClick={() => analyzeMutation.mutate()} disabled={!canAnalyze} className="mt-8 min-h-11 rounded-md bg-canvas px-5 text-base font-bold text-surface-teal-deep transition hover:bg-canvas-soft disabled:opacity-50">Analizar progresión actual</button>
         </div>
       </section>
 

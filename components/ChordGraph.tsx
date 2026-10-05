@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import * as d3 from "d3"
-import { categoryColor, chordFamilyColor, connectionLabel, getChordRing, getCircleAngle, getCircleDistance, getChordRoot, getIntervalName } from "@/lib/music"
+import { CHORD_TYPE_RING, categoryColor, chordFamilyColor, connectionLabel, getChordRing, getCircleAngle, getCircleDistance, getChordRoot, getIntervalName } from "@/lib/music"
 import { Chord, Connection } from "@/types"
 
 interface Props {
@@ -32,7 +32,11 @@ export default function ChordGraph({ sourceChord, connections, chords, mode = "c
     const centerY = height / 2
     const outerRadius = 250
     const ringStep = 28
-    const visibleIds = new Set(mode === "mandala" ? chords.map(chord => chord.id) : [sourceChord.id, ...connections.map(c => c.target)])
+    const visibleIds = new Set(
+      mode === "mandala"
+        ? chords.filter(chord => chord.type in CHORD_TYPE_RING).map(chord => chord.id)
+        : [sourceChord.id, ...connections.map(c => c.target)],
+    )
     const visibleChords = chords.filter(chord => visibleIds.has(chord.id))
 
     const nodes = visibleChords.map(chord => {
