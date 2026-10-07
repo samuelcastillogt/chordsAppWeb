@@ -56,7 +56,7 @@ The explorer uses these backend endpoints:
 - `tonality`: tonal context passed to the connection and analysis endpoints.
 - `progressionName`: editable saved progression name.
 - `progression`: ordered chord IDs for playback, analysis, and persistence.
-- `mode`: `connections` or `mandala` graph mode.
+- `mode`: map view, `mandala` (default), `connections` or `fretboard`. Its selector sits next to the PNG/SVG download buttons above the map.
 - `selectedProgressionId`: controls create vs update behavior.
 - `isTablatureModalOpen`: controls the generated tablature export modal.
 - `suggestionMode` / `stylePreset`: intention filter and ranking preset for suggestions (the graph shows the same filtered list).

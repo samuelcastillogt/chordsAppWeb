@@ -25,6 +25,8 @@ import { AnalyzeResponse, Chord, ConnectionsResponse, ParsedChord, Progression, 
 
 const DEFAULT_PROGRESSION = ["C", "G7", "Am", "F"]
 
+type ViewMode = "connections" | "mandala" | "fretboard"
+
 function downloadTablatureText(tablature: TablatureResponse) {
   downloadBlob(new Blob([tablature.text], { type: "text/plain;charset=utf-8" }), `${slugify(tablature.title, "tablatura")}.txt`)
 }
@@ -72,7 +74,7 @@ function Explorer() {
   const [tonality, setTonality] = useState("C")
   const [progressionName, setProgressionName] = useState("Nueva progresión")
   const [progression, setProgression] = useState<string[]>(DEFAULT_PROGRESSION)
-  const [mode, setMode] = useState<"connections" | "mandala" | "fretboard">("connections")
+  const [mode, setMode] = useState<ViewMode>("mandala")
   const [activeNotes, setActiveNotes] = useState<string[]>([])
   const [selectedProgressionId, setSelectedProgressionId] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -320,17 +322,9 @@ function Explorer() {
             </div>
           </div>
           <div className="rounded-xl border border-hairline-dark bg-primary/70 p-6 shadow-2xl">
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2">
               <ChordSelector label="Acorde actual" chords={chords} value={selectedChord} onChange={setSelectedChord} />
               <ChordSelector label="Tonalidad" chords={chords.filter(chord => chord.type === "major" || chord.type === "minor")} value={tonality} onChange={setTonality} />
-              <label className="flex flex-col gap-1 text-sm text-on-dark-mute">
-                Vista
-                <select value={mode} onChange={event => setMode(event.target.value as "connections" | "mandala" | "fretboard")} className="min-h-11 rounded-md border border-hairline-dark bg-primary px-3 py-2 text-on-primary outline-none focus:border-surface-violet-soft focus:ring-2 focus:ring-surface-violet-soft/30">
-                <option value="connections">Mapa simple recomendado</option>
-                <option value="mandala">Mandala armónico</option>
-                <option value="fretboard">Mástil de intervalos</option>
-                </select>
-              </label>
             </div>
             <ol className="mt-6 grid gap-2 text-sm text-on-dark-mute md:grid-cols-3">
               <li className="rounded-md border border-hairline-dark p-3"><strong className="block text-on-primary">1. Elige</strong> un acorde base.</li>
@@ -353,15 +347,26 @@ function Explorer() {
               <p className="text-xs font-[540] uppercase tracking-[0.2em] text-ink-mute">Mapa armónico</p>
               <h2 className="mt-2 text-[48px] font-[460] leading-[0.96] tracking-[-1.32px] text-ink">{mode === "mandala" ? `Mandala en ${tonality.endsWith("m") ? `${tonality.slice(0, -1)} menor` : `${tonality} mayor`}` : mode === "fretboard" ? `Intervalos de ${selectedChord}` : `Opciones para ${selectedChord}`}</h2>
             </div>
-            <div className="flex max-w-sm flex-col gap-3">
-            <p className="text-sm leading-6 text-ink-mute">{mode === "mandala" ? "Toda la armonía en un mapa que gira con tu tonalidad. Las flechas son los caminos desde el acorde actual; el hilo dorado es tu progresión." : mode === "fretboard" ? "Cada punto marca un intervalo de la triada sobre el mastil. Solo se ilumina mientras suena." : "Verde suena más natural; rojo crea más tensión. Haz hover para ver el intervalo."}</p>
+            <p className="max-w-sm text-sm leading-6 text-ink-mute">{mode === "mandala" ? "Toda la armonía en un mapa que gira con tu tonalidad. Las flechas son los caminos desde el acorde actual; el hilo dorado es tu progresión." : mode === "fretboard" ? "Cada punto marca un intervalo de la triada sobre el mastil. Solo se ilumina mientras suena." : "Verde suena más natural; rojo crea más tensión. Haz hover para ver el intervalo."}</p>
+          </div>
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <label className="sr-only" htmlFor="map-view">Vista</label>
+            <select
+              id="map-view"
+              value={mode}
+              onChange={event => setMode(event.target.value as ViewMode)}
+              className="min-h-9 rounded-md border border-ink/30 bg-canvas px-2 text-xs font-semibold text-ink outline-none focus:border-ink"
+            >
+              <option value="mandala">Mandala armónico</option>
+              <option value="connections">Mapa simple recomendado</option>
+              <option value="fretboard">Mástil de intervalos</option>
+            </select>
             {mode !== "fretboard" ? (
-              <div className="flex gap-2">
+              <>
                 <button type="button" onClick={() => exportGraph("png")} className="min-h-9 rounded-md border border-hairline px-3 text-xs font-semibold hover:border-ink">Descargar PNG</button>
                 <button type="button" onClick={() => exportGraph("svg")} className="min-h-9 rounded-md border border-hairline px-3 text-xs font-semibold hover:border-ink">Descargar SVG</button>
-              </div>
+              </>
             ) : null}
-            </div>
           </div>
           <div ref={graphRef} className="rounded-md bg-canvas-soft p-1 sm:p-3">
             {connectionsError ? (
