@@ -2,66 +2,31 @@
 
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
-import { Suspense, useEffect, useRef, useState } from "react"
+import { Suspense, useEffect, useMemo, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import ChordGraph from "@/components/ChordGraph"
 import ChordSelector from "@/components/ChordSelector"
+import ConfirmDialog from "@/components/ConfirmDialog"
 import GuitarFretboard from "@/components/GuitarFretboard"
+import HarmonicMandala from "@/components/HarmonicMandala"
+import PlayerControls from "@/components/PlayerControls"
+import SuggestionPanel from "@/components/SuggestionPanel"
+import TensionCurve from "@/components/TensionCurve"
 import { appUrl, del, get, getApiBaseUrl, post, put } from "@/lib/api"
+import { playArpeggio } from "@/lib/audio"
 import { useAuth } from "@/lib/auth"
-import { categoryColor, connectionLabel, noteToFrequency } from "@/lib/music"
+import { downloadBlob, downloadSvg, downloadSvgAsPng, slugify } from "@/lib/export"
+import { progressionToMidi } from "@/lib/midi"
+import { categoryColor, connectionLabel } from "@/lib/music"
+import { moveItem } from "@/lib/progression"
+import { StylePreset, SuggestionMode, rankSuggestions } from "@/lib/suggestions"
+import { usePlayer } from "@/lib/usePlayer"
 import { AnalyzeResponse, Chord, ConnectionsResponse, ParsedChord, Progression, TablatureResponse } from "@/types"
 
 const DEFAULT_PROGRESSION = ["C", "G7", "Am", "F"]
 
-type AudioWindow = Window & typeof globalThis & {
-  webkitAudioContext?: typeof AudioContext
-}
-
-function playChord(notes: string[], startAt: number, context: AudioContext) {
-  notes.forEach(note => {
-    const oscillator = context.createOscillator()
-    const gain = context.createGain()
-    oscillator.type = "triangle"
-    oscillator.frequency.value = noteToFrequency(note, 4)
-    gain.gain.setValueAtTime(0.0001, startAt)
-    gain.gain.exponentialRampToValueAtTime(0.18, startAt + 0.03)
-    gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.85)
-    oscillator.connect(gain).connect(context.destination)
-    oscillator.start(startAt)
-    oscillator.stop(startAt + 0.9)
-  })
-}
-
-function playNote(note: string, startAt: number, context: AudioContext) {
-  const oscillator = context.createOscillator()
-  const gain = context.createGain()
-  oscillator.type = "triangle"
-  oscillator.frequency.value = noteToFrequency(note, 4)
-  gain.gain.setValueAtTime(0.0001, startAt)
-  gain.gain.exponentialRampToValueAtTime(0.18, startAt + 0.03)
-  gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.36)
-  oscillator.connect(gain).connect(context.destination)
-  oscillator.start(startAt)
-  oscillator.stop(startAt + 0.38)
-}
-
-function filenameFromTitle(title: string, extension: string) {
-  const safeTitle = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "tablature"
-  return `${safeTitle}.${extension}`
-}
-
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement("a")
-  link.href = url
-  link.download = filename
-  link.click()
-  URL.revokeObjectURL(url)
-}
-
 function downloadTablatureText(tablature: TablatureResponse) {
-  downloadBlob(new Blob([tablature.text], { type: "text/plain;charset=utf-8" }), filenameFromTitle(tablature.title, "txt"))
+  downloadBlob(new Blob([tablature.text], { type: "text/plain;charset=utf-8" }), `${slugify(tablature.title, "tablatura")}.txt`)
 }
 
 function downloadTablaturePng(tablature: TablatureResponse) {
@@ -86,7 +51,7 @@ function downloadTablaturePng(tablature: TablatureResponse) {
   })
 
   canvas.toBlob(blob => {
-    if (blob) downloadBlob(blob, filenameFromTitle(tablature.title, "png"))
+    if (blob) downloadBlob(blob, `${slugify(tablature.title, "tablatura")}.png`)
   }, "image/png")
 }
 
@@ -113,15 +78,23 @@ function Explorer() {
   const [message, setMessage] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isTablatureModalOpen, setIsTablatureModalOpen] = useState(false)
+  const [suggestionMode, setSuggestionMode] = useState<SuggestionMode>("all")
+  const [stylePreset, setStylePreset] = useState<StylePreset>("balanced")
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<Progression | null>(null)
+  const graphRef = useRef<HTMLDivElement>(null)
+  const curveRef = useRef<HTMLDivElement>(null)
+  const player = usePlayer()
 
   const { data: chords = [], isLoading: chordsLoading, error: chordsError } = useQuery<Chord[]>({
     queryKey: ["chords"],
     queryFn: () => get<Chord[]>("/api/v1/chords"),
   })
 
+  // Ask for more than we show so the intention filters still have enough options.
   const { data: connectionsData, isLoading: connectionsLoading, error: connectionsError } = useQuery<ConnectionsResponse>({
     queryKey: ["connections", selectedChord, tonality],
-    queryFn: () => get<ConnectionsResponse>(`/api/v1/chords/${selectedChord}/connections`, { tonality, min_score: 0, max_results: 18 }),
+    queryFn: () => get<ConnectionsResponse>(`/api/v1/chords/${selectedChord}/connections`, { tonality, min_score: 0, max_results: 60 }),
     enabled: !!selectedChord,
   })
 
@@ -233,10 +206,20 @@ function Explorer() {
     setMessage(`${chord} agregado a tu progresión`)
   }
 
-  const removeChordAt = (index: number) => {
+  const resetResults = () => {
     analyzeMutation.reset()
     tablatureMutation.reset()
+  }
+
+  const removeChordAt = (index: number) => {
+    resetResults()
     setProgression(current => current.filter((_, itemIndex) => itemIndex !== index))
+  }
+
+  const moveChord = (from: number, to: number) => {
+    if (to < 0 || to >= progression.length || from === to) return
+    resetResults()
+    setProgression(current => moveItem(current, from, to))
   }
 
   const loadProgression = (saved: Progression) => {
@@ -251,51 +234,64 @@ function Explorer() {
     setErrorMessage(null)
   }
 
+  const chordById = useMemo(() => new Map(chords.map(chord => [chord.id, chord])), [chords])
+  const notesOf = (id: string) => {
+    const chord = chordById.get(id)
+    return chord ? chord.notes ?? chord.triad : []
+  }
+
   const playProgression = () => {
-    const audioWindow = window as AudioWindow
-    const AudioCtor = audioWindow.AudioContext || audioWindow.webkitAudioContext
-    if (!AudioCtor) return
-    const context = new AudioCtor()
-    progression.forEach((chordId, index) => {
-      const chord = chords.find(item => item.id === chordId)
-      if (chord) {
-        const delay = index * 1050
-        playChord(chord.notes ?? chord.triad, context.currentTime + index * 1.05, context)
-        window.setTimeout(() => {
-          setSelectedChord(chord.id)
-          setActiveNotes(chord.notes ?? chord.triad)
-        }, delay)
-        window.setTimeout(() => setActiveNotes([]), delay + 900)
+    player.play(progression.map(notesOf), "progression", index => {
+      if (index === null) {
+        setActiveNotes([])
+        return
       }
+      setActiveNotes(notesOf(progression[index]))
+      // The fretboard view follows the chord that is sounding.
+      if (mode === "fretboard") setSelectedChord(progression[index])
     })
+  }
+
+  const previewSuggestion = (target: string) => {
+    player.play([notesOf(selectedChord), notesOf(target)], `preview:${target}`, undefined, { loop: false })
   }
 
   const playSelectedChord = () => {
-    const chord = targetChord ?? chords.find(item => item.id === selectedChord)
-    const audioWindow = window as AudioWindow
-    const AudioCtor = audioWindow.AudioContext || audioWindow.webkitAudioContext
-    if (!AudioCtor || !chord) return
-    const context = new AudioCtor()
-    chord.triad.forEach((note, index) => {
-      playNote(note, context.currentTime + index * 0.42, context)
-      window.setTimeout(() => setActiveNotes([note]), index * 420)
-    })
-    window.setTimeout(() => setActiveNotes([]), chord.triad.length * 420 + 180)
+    const chord = targetChord ?? chordById.get(selectedChord)
+    if (!chord) return
+    playArpeggio(chord.triad, note => setActiveNotes(note ? [note] : []))
+  }
+
+  const exportGraph = (format: "png" | "svg") => {
+    const svg = graphRef.current?.querySelector("svg")
+    if (!svg) return
+    const title = mode === "mandala" ? "chordweaver-mandala" : `chordweaver-opciones-${selectedChord}`
+    if (format === "svg") downloadSvg(svg, title)
+    else downloadSvgAsPng(svg, title)
+  }
+
+  const exportCurve = () => {
+    const svg = curveRef.current?.querySelector("svg")
+    if (svg) downloadSvgAsPng(svg, `${progressionName || "progresion"}-tension`)
+  }
+
+  const exportMidi = () => {
+    const midi = progressionToMidi(progression.map(notesOf), player.settings.bpm)
+    downloadBlob(new Blob([midi], { type: "audio/midi" }), `${slugify(progressionName, "progresion")}.mid`)
   }
 
   const analysis = analyzeMutation.data?.analysis
-  const selectedConnections = connectionsData?.connections ?? []
+  const rankedSuggestions = useMemo(
+    () => rankSuggestions(connectionsData?.connections ?? [], suggestionMode, stylePreset),
+    [connectionsData, suggestionMode, stylePreset],
+  )
+  const previewing = player.playingId?.startsWith("preview:") ? player.playingId.slice(8) : null
+  const playingIndex = player.playingId === "progression" ? player.current : null
   const canAnalyze = progression.length >= 2 && !analyzeMutation.isPending
   const canSave = progression.length > 0 && progressionName.trim().length > 0 && !saveMutation.isPending
   const save = () => (user ? saveMutation.mutate() : openDialog())
   const canGenerateTablature = progression.length > 0 && !tablatureMutation.isPending
   const tablature = tablatureMutation.data
-
-  const deleteProgression = (id: string) => {
-    if (window.confirm("Esta progresión se eliminará. ¿Deseas continuar?")) {
-      deleteMutation.mutate(id)
-    }
-  }
 
   if (chordsError) {
     return (
@@ -318,7 +314,7 @@ function Explorer() {
             <p className="mt-6 max-w-xl text-lg font-[540] leading-7 tracking-[-0.135px] text-on-dark-mute">Elige un acorde base, mira las opciones recomendadas y arma una progresión que puedas escuchar, analizar y guardar.</p>
             <div className="mt-8 flex flex-wrap gap-3">
               <button type="button" onClick={() => addChordToProgression(selectedChord)} className="min-h-11 rounded-full bg-surface-violet-soft px-5 py-3 text-base font-bold text-primary transition hover:bg-white">Agregar acorde base</button>
-              <button type="button" onClick={playProgression} className="min-h-11 rounded-full border border-hairline-dark px-5 py-3 text-base font-bold text-on-primary transition hover:bg-white/10">Escuchar ejemplo</button>
+              <button type="button" onClick={player.playingId === "progression" ? player.stop : playProgression} className="min-h-11 rounded-full border border-hairline-dark px-5 py-3 text-base font-bold text-on-primary transition hover:bg-white/10">{player.playingId === "progression" ? "■ Detener" : "Escuchar progresión"}</button>
               <Link href="/fretboard" className="inline-flex min-h-11 items-center rounded-full border border-hairline-dark px-5 py-3 text-base font-bold text-on-primary transition hover:bg-white/10">Mástil interactivo</Link>
               <Link href="/piano" className="inline-flex min-h-11 items-center rounded-full border border-hairline-dark px-5 py-3 text-base font-bold text-on-primary transition hover:bg-white/10">Piano interactivo</Link>
             </div>
@@ -331,7 +327,7 @@ function Explorer() {
                 Vista
                 <select value={mode} onChange={event => setMode(event.target.value as "connections" | "mandala" | "fretboard")} className="min-h-11 rounded-md border border-hairline-dark bg-primary px-3 py-2 text-on-primary outline-none focus:border-surface-violet-soft focus:ring-2 focus:ring-surface-violet-soft/30">
                 <option value="connections">Mapa simple recomendado</option>
-                <option value="mandala">Mandala completo</option>
+                <option value="mandala">Mandala armónico</option>
                 <option value="fretboard">Mástil de intervalos</option>
                 </select>
               </label>
@@ -350,24 +346,48 @@ function Explorer() {
         </div>
       </section>
 
-      <section className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-6 py-16 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
-        <div className="rounded-lg border border-hairline bg-canvas p-8 shadow-sm">
+      <section className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-3 py-10 sm:px-6 sm:py-16 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+        <div className="rounded-lg border border-hairline bg-canvas p-4 shadow-sm sm:p-8">
           <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
               <p className="text-xs font-[540] uppercase tracking-[0.2em] text-ink-mute">Mapa armónico</p>
-              <h2 className="mt-2 text-[48px] font-[460] leading-[0.96] tracking-[-1.32px] text-ink">{mode === "mandala" ? "Todos los acordes" : mode === "fretboard" ? `Intervalos de ${selectedChord}` : `Opciones para ${selectedChord}`}</h2>
+              <h2 className="mt-2 text-[48px] font-[460] leading-[0.96] tracking-[-1.32px] text-ink">{mode === "mandala" ? `Mandala en ${tonality.endsWith("m") ? `${tonality.slice(0, -1)} menor` : `${tonality} mayor`}` : mode === "fretboard" ? `Intervalos de ${selectedChord}` : `Opciones para ${selectedChord}`}</h2>
             </div>
-            <p className="max-w-sm text-sm leading-6 text-ink-mute">{mode === "mandala" ? "Las flechas muestran la direccion sugerida. Doble flecha indica ida y vuelta; punteado son relativos y lineas dobles son paralelos." : mode === "fretboard" ? "Cada punto marca un intervalo de la triada sobre el mastil. Solo se ilumina mientras suena." : "Verde suena más natural; rojo crea más tensión. Haz hover para ver el intervalo."}</p>
+            <div className="flex max-w-sm flex-col gap-3">
+            <p className="text-sm leading-6 text-ink-mute">{mode === "mandala" ? "Toda la armonía en un mapa que gira con tu tonalidad. Las flechas son los caminos desde el acorde actual; el hilo dorado es tu progresión." : mode === "fretboard" ? "Cada punto marca un intervalo de la triada sobre el mastil. Solo se ilumina mientras suena." : "Verde suena más natural; rojo crea más tensión. Haz hover para ver el intervalo."}</p>
+            {mode !== "fretboard" ? (
+              <div className="flex gap-2">
+                <button type="button" onClick={() => exportGraph("png")} className="min-h-9 rounded-md border border-hairline px-3 text-xs font-semibold hover:border-ink">Descargar PNG</button>
+                <button type="button" onClick={() => exportGraph("svg")} className="min-h-9 rounded-md border border-hairline px-3 text-xs font-semibold hover:border-ink">Descargar SVG</button>
+              </div>
+            ) : null}
+            </div>
           </div>
-          <div className="rounded-md bg-canvas-soft p-3">
+          <div ref={graphRef} className="rounded-md bg-canvas-soft p-1 sm:p-3">
             {connectionsError ? (
               <div className="flex min-h-[420px] items-center justify-center rounded-md border border-hairline bg-canvas p-6 text-center text-ink-mute">No se pudieron cargar las conexiones. Revisa que el backend siga activo.</div>
-            ) : chordsLoading || connectionsLoading ? (
-              <div className="flex min-h-[420px] items-center justify-center text-ink-mute">Cargando conexiones...</div>
+            ) : chordsLoading || (connectionsLoading && mode !== "mandala") ? (
+              <div role="status" aria-label="Cargando conexiones" className="flex min-h-[420px] items-center justify-center">
+                <div className="aspect-square w-3/4 max-w-[420px] animate-pulse rounded-full border-[18px] border-hairline" />
+              </div>
             ) : mode === "fretboard" ? (
               <GuitarFretboard chord={targetChord ?? null} activeNotes={activeNotes} onPlay={playSelectedChord} />
+            ) : mode === "mandala" ? (
+              <HarmonicMandala
+                chords={chords}
+                selected={selectedChord}
+                tonality={tonality}
+                connections={rankedSuggestions}
+                progression={progression}
+                playingIndex={playingIndex}
+                onSelect={setSelectedChord}
+                onAdd={addChordToProgression}
+                onPreview={(ids, id) => player.play(ids.map(notesOf), id, undefined, { loop: false })}
+                onStopPreview={player.stop}
+                playingId={player.playingId}
+              />
             ) : (
-              <ChordGraph sourceChord={targetChord ?? null} connections={selectedConnections} chords={chords} mode={mode} onSelectChord={setSelectedChord} />
+              <ChordGraph sourceChord={targetChord ?? null} connections={rankedSuggestions} chords={chords} onSelectChord={setSelectedChord} />
             )}
           </div>
         </div>
@@ -376,39 +396,24 @@ function Explorer() {
           <p className="text-xs font-[540] uppercase tracking-[0.2em] text-ink-mute">Sugerencias</p>
           <h2 className="mt-2 text-[28px] font-[540] leading-[1.14] tracking-[-0.63px]">Qué puede seguir</h2>
           <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-ink-mute">
-            {mode === "mandala" ? (
-              <>
-                <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#f472b6]" />Mayores</span>
-                <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#38bdf8]" />Menores</span>
-                <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#8b5cf6]" />Dim / dim7</span>
-                <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#facc15]" />Dominantes</span>
-                <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#22c55e]" />Aumentados</span>
-              </>
-            ) : (
-              <>
-                <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#22c55e]" />Natural</span>
-                <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#eab308]" />Media</span>
-                <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#f97316]" />Tensa</span>
-                <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#ef4444]" />Extrema</span>
-              </>
-            )}
+            <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#22c55e]" />Natural</span>
+            <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#eab308]" />Media</span>
+            <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#f97316]" />Tensa</span>
+            <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#ef4444]" />Extrema</span>
           </div>
-          <ul className="mt-5 max-h-[520px] space-y-2 overflow-auto pr-1 text-sm">
-            {selectedConnections.length === 0 && !connectionsLoading && (
-              <li className="rounded-md border border-hairline bg-canvas p-4 text-ink-mute">No hay sugerencias disponibles para este acorde.</li>
-            )}
-            {selectedConnections.map(conn => (
-              <li key={conn.target}>
-                <div className="rounded-md border border-hairline bg-canvas p-3 transition hover:border-hairline-dark">
-                  <button type="button" onClick={() => setSelectedChord(conn.target)} className="flex min-h-8 w-full items-center justify-between text-left">
-                    <span><strong>{conn.target}</strong><span className="ml-2 text-ink-mute">{connectionLabel(conn.category)}</span></span>
-                    <span className="font-mono" style={{ color: categoryColor(conn.category) }}>{conn.score}</span>
-                  </button>
-                  <button type="button" onClick={() => addChordToProgression(conn.target)} className="mt-2 min-h-9 rounded-md bg-primary px-3 text-xs font-bold text-on-primary hover:bg-primary-deep">Agregar a mi progresión</button>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <SuggestionPanel
+            source={selectedChord}
+            suggestions={rankedSuggestions}
+            mode={suggestionMode}
+            preset={stylePreset}
+            onModeChange={setSuggestionMode}
+            onPresetChange={setStylePreset}
+            onSelect={setSelectedChord}
+            onAdd={addChordToProgression}
+            onPreview={previewSuggestion}
+            previewing={previewing}
+            loading={connectionsLoading}
+          />
         </aside>
       </section>
 
@@ -422,19 +427,49 @@ function Explorer() {
                 <input value={progressionName} onChange={event => setProgressionName(event.target.value)} className="min-h-11 rounded-sm border border-hairline bg-canvas px-3 text-ink outline-none focus:border-hairline-dark" />
               </label>
               <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={playProgression} disabled={progression.length === 0} className="min-h-11 rounded-md border border-hairline-dark bg-canvas px-5 text-base font-bold text-ink transition hover:bg-canvas-soft disabled:opacity-50">Escuchar</button>
                 <button type="button" onClick={() => analyzeMutation.mutate()} disabled={!canAnalyze} className="min-h-11 rounded-md border border-hairline-dark bg-canvas px-5 text-base font-bold text-ink transition hover:bg-canvas-soft disabled:opacity-50">Ver tensión</button>
                 <button type="button" onClick={save} disabled={!canSave || !accountsEnabled} title={accountsEnabled ? undefined : "Las cuentas no están disponibles en este servidor"} className="min-h-11 rounded-md bg-primary px-5 text-base font-bold text-on-primary transition hover:bg-primary-deep disabled:opacity-50">Guardar</button>
                 <button type="button" onClick={() => tablatureMutation.mutate()} disabled={!canGenerateTablature} className="min-h-11 rounded-md bg-surface-teal-deep px-5 text-base font-bold text-on-primary transition hover:bg-surface-teal-mid disabled:opacity-50">{tablatureMutation.isPending ? "Generando..." : "Generar tablatura"}</button>
+                <button type="button" onClick={exportMidi} disabled={progression.length === 0} className="min-h-11 rounded-md border border-hairline-dark bg-canvas px-5 text-base font-bold text-ink transition hover:bg-canvas-soft disabled:opacity-50">MIDI</button>
               </div>
             </div>
-            <p className="mt-3 text-sm text-ink-mute">Tip: toca cualquier chip para quitarlo. Usa las sugerencias para agregar acordes sin buscar en el selector.</p>
-            <div className="mt-6 flex min-h-20 flex-wrap gap-2 rounded-md border border-dashed border-hairline p-4">
-              {progression.length === 0 && <span className="text-sm text-ink-mute">Tu progresión está vacía. Agrega un acorde desde el mapa o las sugerencias.</span>}
-              {progression.map((chord, index) => (
-                <button key={`${chord}-${index}`} type="button" onClick={() => removeChordAt(index)} className="min-h-11 rounded-full border border-hairline bg-canvas px-4 font-semibold text-ink transition hover:border-hairline-dark" aria-label={`Quitar acorde ${chord}`}>{chord}</button>
-              ))}
+            <div className="mt-4">
+              <PlayerControls
+                settings={player.settings}
+                onChange={player.setSettings}
+                isPlaying={player.playingId === "progression"}
+                onPlay={playProgression}
+                onStop={player.stop}
+                disabled={progression.length === 0}
+              />
             </div>
+            <p className="mt-3 text-sm text-ink-mute">Arrastra un acorde para cambiarlo de lugar (o usa las flechas). Toca × para quitarlo y el nombre para ver sus opciones.</p>
+            <ol className="mt-4 flex min-h-20 flex-wrap gap-2 rounded-md border border-dashed border-hairline p-4" aria-label="Acordes de la progresión">
+              {progression.length === 0 && <li className="text-sm text-ink-mute">Tu progresión está vacía. Agrega un acorde desde el mapa o las sugerencias.</li>}
+              {progression.map((chord, index) => (
+                <li
+                  key={`${chord}-${index}`}
+                  draggable
+                  onDragStart={event => {
+                    setDragIndex(index)
+                    event.dataTransfer.effectAllowed = "move"
+                  }}
+                  onDragOver={event => event.preventDefault()}
+                  onDrop={event => {
+                    event.preventDefault()
+                    if (dragIndex !== null) moveChord(dragIndex, index)
+                    setDragIndex(null)
+                  }}
+                  onDragEnd={() => setDragIndex(null)}
+                  className={`flex min-h-11 cursor-grab items-center gap-0.5 rounded-full border bg-canvas pl-1 pr-1 transition active:cursor-grabbing ${playingIndex === index ? "-translate-y-0.5 border-ink shadow-card" : "border-hairline"} ${dragIndex === index ? "opacity-40" : ""}`}
+                >
+                  <button type="button" onClick={() => moveChord(index, index - 1)} disabled={index === 0} aria-label={`Mover ${chord} a la izquierda`} className="h-9 w-7 rounded-full text-ink-mute hover:bg-canvas-soft disabled:opacity-25">‹</button>
+                  <button type="button" onClick={() => setSelectedChord(chord)} className="px-1 font-mono font-semibold text-ink">{chord}</button>
+                  <button type="button" onClick={() => moveChord(index, index + 1)} disabled={index === progression.length - 1} aria-label={`Mover ${chord} a la derecha`} className="h-9 w-7 rounded-full text-ink-mute hover:bg-canvas-soft disabled:opacity-25">›</button>
+                  <button type="button" onClick={() => removeChordAt(index)} aria-label={`Quitar acorde ${chord}`} className="h-9 w-8 rounded-full text-ink-mute hover:bg-fn-dominant/10 hover:text-fn-dominant">×</button>
+                </li>
+              ))}
+            </ol>
             {message && <p className="mt-4 text-sm text-surface-teal-mid">{message}</p>}
             {errorMessage && <p className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{errorMessage}</p>}
           </div>
@@ -457,7 +492,7 @@ function Explorer() {
                   <button type="button" onClick={() => loadProgression(saved)} className="text-left"><strong>{saved.name}</strong><span className="block font-mono text-ink-mute">{saved.chords.join(" - ")}</span></button>
                   <span className="flex shrink-0 gap-1">
                     <button type="button" onClick={() => shareMutation.mutate(saved)} className="rounded-md border border-hairline px-3 py-2 text-xs font-semibold text-ink hover:bg-canvas">{saved.isPublic ? "Copiar enlace" : "Compartir"}</button>
-                    <button type="button" onClick={() => deleteProgression(saved.id)} className="rounded-md border border-hairline px-3 py-2 text-xs font-semibold text-ink hover:bg-canvas">Eliminar</button>
+                    <button type="button" onClick={() => setPendingDelete(saved)} className="rounded-md border border-hairline px-3 py-2 text-xs font-semibold text-ink hover:bg-canvas">Eliminar</button>
                   </span>
                 </li>
               ))}
@@ -474,11 +509,15 @@ function Explorer() {
                 <p className="text-xs font-[540] uppercase tracking-[0.2em] text-ink-mute">Análisis · {analysis.key?.label}</p>
                 <h2 className="mt-2 text-[48px] font-[460] leading-[0.96] tracking-[-1.32px]">Curva de tensión</h2>
                 <p className="mt-3 text-sm text-ink-mute">Score promedio: {analysis.averageScore}</p>
+                <button type="button" onClick={exportCurve} className="mt-3 min-h-9 rounded-md border border-hairline px-3 text-xs font-semibold hover:border-ink">Descargar PNG</button>
               </div>
               <div className="max-w-md text-sm leading-6 text-ink-mute">
                 <p>{analysis.suggestions.join(" ")}</p>
                 <Link href={`/?chords=${encodeURIComponent(progression.join(","))}&key=${encodeURIComponent(tonality)}`} className="mt-2 inline-block font-bold text-ink underline underline-offset-4">Ver grados y sustituciones</Link>
               </div>
+            </div>
+            <div ref={curveRef} className="mt-8">
+              <TensionCurve points={analysis.tensionCurve} chords={analysis.chords} />
             </div>
             <div className="mt-8 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
               {analysis.tensionCurve.map(point => (
@@ -499,6 +538,17 @@ function Explorer() {
           <button type="button" onClick={() => analyzeMutation.mutate()} disabled={!canAnalyze} className="mt-8 min-h-11 rounded-md bg-canvas px-5 text-base font-bold text-surface-teal-deep transition hover:bg-canvas-soft disabled:opacity-50">Analizar progresión actual</button>
         </div>
       </section>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={`¿Eliminar "${pendingDelete?.name ?? ""}"?`}
+        body="La progresión se borrará de tu biblioteca. Si la compartiste, el enlace dejará de funcionar."
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) deleteMutation.mutate(pendingDelete.id)
+          setPendingDelete(null)
+        }}
+      />
 
       {isTablatureModalOpen && tablature && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-primary/70 p-4" role="dialog" aria-modal="true" aria-labelledby="tablature-title">

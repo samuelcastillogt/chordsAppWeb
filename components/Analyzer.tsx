@@ -2,14 +2,17 @@
 
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
-import { FormEvent, useMemo, useState } from "react"
+import { FormEvent, useMemo, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
+import PlayerControls from "@/components/PlayerControls"
 import TensionCurve from "@/components/TensionCurve"
-import { playSequence } from "@/lib/audio"
 import { get, post } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
+import { downloadSvgAsPng } from "@/lib/export"
 import { functionColor, functionLabel, splitChordInput } from "@/lib/music"
+import { changedIndices } from "@/lib/progression"
+import { usePlayer } from "@/lib/usePlayer"
 import { AnalyzeResponse, Chord, Degree, ParsedChord, Progression, TablatureResponse } from "@/types"
 
 const EXAMPLES = [
@@ -29,6 +32,19 @@ const KEYS = [
 ]
 
 type Parsed = { recognized: ParsedChord[]; ignored: string[] }
+type AnalysisResult = { parsed: Parsed; response: AnalyzeResponse }
+
+/** Parse + analyze pipeline shared by the main analysis and the A/B variant. */
+async function analyzeText(text: string, key: string): Promise<AnalysisResult> {
+  const symbols = splitChordInput(text)
+  if (symbols.length < 2) throw new Error("Escribe al menos dos acordes, por ejemplo: Am F C G")
+  const { results } = await post<{ results: ParsedChord[] }>("/api/v1/chords/parse", { symbols })
+  const recognized = results.filter(result => result.chord)
+  const ignored = results.filter(result => !result.chord).map(result => result.input)
+  if (recognized.length < 2) throw new Error("No reconocí suficientes acordes. Revisa la escritura (ej.: Bm, F#m7, D/F#, SOLm).")
+  const response = await post<AnalyzeResponse>("/api/v1/analyze", { chords: recognized.map(item => item.input), tonality: key || undefined })
+  return { parsed: { recognized, ignored }, response }
+}
 
 function songFromUtm(content: string | null): string | null {
   if (!content?.startsWith("song:")) return null
@@ -51,7 +67,9 @@ export default function Analyzer() {
   const [submitted, setSubmitted] = useState<{ text: string; key: string } | null>(
     initialChords ? { text: initialChords, key: initialKey } : null,
   )
-  const [playing, setPlaying] = useState<number | null>(null)
+  const [variant, setVariant] = useState<string[] | null>(null)
+  const curveRef = useRef<HTMLDivElement>(null)
+  const player = usePlayer()
   const [saveName, setSaveName] = useState(fromSong ?? "")
   const [notice, setNotice] = useState<string | null>(null)
 
@@ -62,34 +80,36 @@ export default function Analyzer() {
     queryKey: ["analysis", submitted],
     enabled: !!submitted,
     retry: false,
-    queryFn: async (): Promise<{ parsed: Parsed; response: AnalyzeResponse }> => {
-      const { text, key } = submitted!
-      const symbols = splitChordInput(text)
-      if (symbols.length < 2) throw new Error("Escribe al menos dos acordes, por ejemplo: Am F C G")
-      const { results } = await post<{ results: ParsedChord[] }>("/api/v1/chords/parse", { symbols })
-      const recognized = results.filter(result => result.chord)
-      const ignored = results.filter(result => !result.chord).map(result => result.input)
-      if (recognized.length < 2) throw new Error("No reconocí suficientes acordes. Revisa la escritura (ej.: Bm, F#m7, D/F#, SOLm).")
-      const response = await post<AnalyzeResponse>("/api/v1/analyze", { chords: recognized.map(item => item.input), tonality: key || undefined })
-      return { parsed: { recognized, ignored }, response }
-    },
+    queryFn: () => analyzeText(submitted!.text, submitted!.key),
   })
   const parsed = analysisQuery.data?.parsed ?? null
+  const analysis = analysisQuery.data?.response.analysis
+  const progressionChords = analysis?.chords ?? []
+  const originalSymbols = useMemo(() => parsed?.recognized.map(item => item.input) ?? [], [parsed])
+
+  // Variant B is analysed in the same key as A so the comparison is fair.
+  const variantText = variant?.join(" ") ?? ""
+  const variantQuery = useQuery({
+    queryKey: ["analysis", { text: variantText, key: analysis?.key.id ?? "" }],
+    enabled: !!variant && !!analysis,
+    retry: false,
+    queryFn: () => analyzeText(variantText, analysis!.key.id),
+  })
+  const variantAnalysis = variantQuery.data?.response.analysis
 
   const tablatureMutation = useMutation({
     mutationFn: (chords: string[]) => post<TablatureResponse>("/api/v1/tablature", { chords, title: saveName || "Progresión" }),
   })
 
   const saveMutation = useMutation({
-    mutationFn: (payload: { chords: string[]; tonality: string }) =>
-      post<Progression>("/api/v1/progressions", {
-        name: saveName.trim() || "Progresión sin nombre",
-        chords: payload.chords,
-        tonality: payload.tonality,
-        source: source?.slice(0, 200) ?? null,
-      }),
-    onSuccess: () => {
-      setNotice("Guardada en tu biblioteca.")
+    mutationFn: async (items: Array<{ name: string; chords: string[]; tonality: string }>) => {
+      for (const item of items) {
+        await post<Progression>("/api/v1/progressions", { ...item, source: source?.slice(0, 200) ?? null })
+      }
+      return items.length
+    },
+    onSuccess: count => {
+      setNotice(count > 1 ? "Original y variante guardadas en tu biblioteca." : "Guardada en tu biblioteca.")
       queryClient.invalidateQueries({ queryKey: ["progressions"] })
     },
   })
@@ -98,36 +118,51 @@ export default function Analyzer() {
     setNotice(null)
     tablatureMutation.reset()
     saveMutation.reset()
+    player.stop()
+    setVariant(null)
     setSubmitted({ text: text.trim(), key })
   }
-
-  const analysis = analysisQuery.data?.response.analysis
-  const progressionChords = analysis?.chords ?? []
 
   function onSubmit(event: FormEvent) {
     event.preventDefault()
     run()
   }
 
-  function replaceChord(index: number, replacement: string) {
-    const symbols = parsed?.recognized.map(item => item.input) ?? []
-    symbols[index] = replacement
-    const text = symbols.join(" ")
+  /** Substitutions build variant B on top of A (or of the current B), keeping A intact to compare. */
+  function tryReplacement(index: number, replacement: string) {
+    const next = [...(variant ?? originalSymbols)]
+    next[index] = replacement
+    saveMutation.reset()
+    setNotice(null)
+    setVariant(changedIndices(originalSymbols, next).length ? next : null)
+  }
+
+  function keepVariant() {
+    if (!variant) return
+    const text = variant.join(" ")
     setInput(text)
     run(text, keyOverride)
   }
 
-  function play() {
-    playSequence(progressionChords.map(id => notesById.get(id) ?? []), setPlaying)
+  function playChords(ids: string[], id: string) {
+    player.play(ids.map(chord => notesById.get(chord) ?? []), id)
   }
 
-  function save() {
+  function save(includeVariant = false) {
     if (!analysis) return
     if (!user) {
       openDialog()
       return
     }
-    saveMutation.mutate({ chords: analysis.chords, tonality: analysis.key.id })
+    const name = saveName.trim() || "Progresión sin nombre"
+    const items = [{ name, chords: analysis.chords, tonality: analysis.key.id }]
+    if (includeVariant && variantAnalysis) items.push({ name: `${name} (variante)`, chords: variantAnalysis.chords, tonality: analysis.key.id })
+    saveMutation.mutate(items)
+  }
+
+  function exportCurve() {
+    const svg = curveRef.current?.querySelector("svg")
+    if (svg) downloadSvgAsPng(svg, `${saveName || "progresion"}-fluidez`)
   }
 
   function downloadTablature(tablature: TablatureResponse) {
@@ -229,7 +264,6 @@ export default function Analyzer() {
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={play} className="min-h-11 rounded-md bg-primary px-5 font-bold text-on-primary hover:bg-primary-deep">▶ Escuchar</button>
                 <Link href={explorerHref} className="inline-flex min-h-11 items-center rounded-md border border-ink/20 bg-canvas px-5 font-bold hover:border-ink">Explorar qué sigue</Link>
                 <button type="button" onClick={() => tablatureMutation.mutate(analysis.chords)} className="min-h-11 rounded-md border border-ink/20 bg-canvas px-5 font-bold hover:border-ink">
                   {tablatureMutation.isPending ? "Generando..." : "Tablatura"}
@@ -237,17 +271,60 @@ export default function Analyzer() {
               </div>
             </div>
 
+            <PlayerControls
+              settings={player.settings}
+              onChange={player.setSettings}
+              isPlaying={player.playingId === "A"}
+              onPlay={() => playChords(progressionChords, "A")}
+              onStop={player.stop}
+            />
+
             <ol className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {analysis.degrees.map((degree, index) => (
-                <DegreeCard key={`${degree.input}-${index}`} degree={degree} active={playing === index} onReplace={replacement => replaceChord(index, replacement)} />
+                <DegreeCard
+                  key={`${degree.input}-${index}`}
+                  degree={degree}
+                  active={player.playingId === "A" && player.current === index}
+                  pending={variant?.[index] !== undefined && variant[index] !== originalSymbols[index] ? variant[index] : null}
+                  onReplace={replacement => tryReplacement(index, replacement)}
+                />
               ))}
             </ol>
 
+            {variant ? (
+              <CompareAB
+                original={originalSymbols}
+                variant={variant}
+                analysisA={analysis}
+                analysisB={variantAnalysis ?? null}
+                loading={variantQuery.isFetching}
+                error={variantQuery.isError ? (variantQuery.error as Error).message : null}
+                playingId={player.playingId}
+                playingIndex={player.current}
+                onPlay={id => (player.playingId === id ? player.stop() : playChords(id === "A" ? progressionChords : variantAnalysis?.chords ?? [], id))}
+                onKeep={keepVariant}
+                onDiscard={() => {
+                  player.stop()
+                  setVariant(null)
+                }}
+                onSaveBoth={accountsEnabled ? () => save(true) : null}
+                saving={saveMutation.isPending}
+                user={!!user}
+              />
+            ) : null}
+
             <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
               <section className="rounded-xl border border-hairline bg-canvas p-5 shadow-card">
-                <h3 className="font-display text-2xl">Fluidez de cada cambio</h3>
-                <p className="mb-4 mt-1 text-sm text-ink-mute">Promedio {analysis.averageScore}/100</p>
-                <TensionCurve points={analysis.tensionCurve} chords={analysis.degrees.map(degree => degree.input)} />
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="font-display text-2xl">Fluidez de cada cambio</h3>
+                    <p className="mb-4 mt-1 text-sm text-ink-mute">Promedio {analysis.averageScore}/100</p>
+                  </div>
+                  <button type="button" onClick={exportCurve} className="min-h-9 rounded-md border border-hairline px-3 text-xs font-semibold hover:border-ink">PNG</button>
+                </div>
+                <div ref={curveRef}>
+                  <TensionCurve points={analysis.tensionCurve} chords={analysis.degrees.map(degree => degree.input)} />
+                </div>
               </section>
               <section className="flex flex-col gap-4 rounded-xl border border-hairline bg-canvas p-5 shadow-card">
                 <h3 className="font-display text-2xl">Lo que cuenta esta armonía</h3>
@@ -261,7 +338,7 @@ export default function Analyzer() {
                     <label htmlFor="save-name" className="text-sm font-semibold">Guardar en mi biblioteca</label>
                     <div className="flex gap-2">
                       <input id="save-name" value={saveName} onChange={event => setSaveName(event.target.value)} placeholder="Nombre de la progresión" className="min-h-11 min-w-0 flex-1 rounded-md border border-hairline px-3 outline-none focus:border-ink" />
-                      <button type="button" onClick={save} disabled={saveMutation.isPending} className="min-h-11 rounded-md bg-surface-teal-deep px-4 font-bold text-on-primary hover:bg-surface-teal-mid disabled:opacity-60">
+                      <button type="button" onClick={() => save()} disabled={saveMutation.isPending} className="min-h-11 rounded-md bg-surface-teal-deep px-4 font-bold text-on-primary hover:bg-surface-teal-mid disabled:opacity-60">
                         {user ? "Guardar" : "Entrar y guardar"}
                       </button>
                     </div>
@@ -290,7 +367,7 @@ export default function Analyzer() {
   )
 }
 
-function DegreeCard({ degree, active, onReplace }: { degree: Degree; active: boolean; onReplace: (chord: string) => void }) {
+function DegreeCard({ degree, active, pending, onReplace }: { degree: Degree; active: boolean; pending: string | null; onReplace: (chord: string) => void }) {
   const color = functionColor(degree.function, degree.role)
   return (
     <li
@@ -312,24 +389,131 @@ function DegreeCard({ degree, active, onReplace }: { degree: Degree; active: boo
       <p className="px-4 pt-3 text-sm leading-6 text-ink-mute">{degree.explanation}</p>
       {degree.substitutions.length ? (
         <div className="mt-auto border-t border-hairline p-4 pt-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-ink-faint">Prueba en su lugar</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-ink-faint">
+            {pending ? <>En la variante B: <span className="font-mono normal-case tracking-normal text-ink">{pending}</span></> : "Prueba en su lugar (variante B)"}
+          </p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {degree.substitutions.map(sub => (
               <button
                 key={sub.chord}
                 type="button"
                 title={sub.reason}
-                onClick={() => onReplace(sub.chord)}
-                className="rounded-md border border-hairline bg-canvas-soft px-2 py-1 font-mono text-sm hover:border-ink"
+                onClick={() => onReplace(pending === sub.chord ? degree.input : sub.chord)}
+                aria-pressed={pending === sub.chord}
+                className={`rounded-md border px-2 py-1 font-mono text-sm hover:border-ink ${pending === sub.chord ? "border-ink bg-primary text-on-primary" : "border-hairline bg-canvas-soft"}`}
               >
                 {sub.chord}
-                <span className="ml-1 font-sans text-[10px] uppercase text-ink-faint">{sub.kind}</span>
+                <span className={`ml-1 font-sans text-[10px] uppercase ${pending === sub.chord ? "text-on-dark-mute" : "text-ink-faint"}`}>{sub.kind}</span>
               </button>
             ))}
           </div>
         </div>
       ) : null}
     </li>
+  )
+}
+
+type CompareProps = {
+  original: string[]
+  variant: string[]
+  analysisA: AnalyzeResponse["analysis"]
+  analysisB: AnalyzeResponse["analysis"] | null
+  loading: boolean
+  error: string | null
+  playingId: string | null
+  playingIndex: number | null
+  onPlay: (id: "A" | "B") => void
+  onKeep: () => void
+  onDiscard: () => void
+  onSaveBoth: (() => void) | null
+  saving: boolean
+  user: boolean
+}
+
+/** Side-by-side A/B: original vs the variant built from substitutions. */
+function CompareAB(props: CompareProps) {
+  const { original, variant, analysisA, analysisB, loading, error, playingId, playingIndex, onPlay, onKeep, onDiscard, onSaveBoth, saving, user } = props
+  const changed = new Set(changedIndices(original, variant))
+  const delta = analysisB ? Math.round((analysisB.averageScore - analysisA.averageScore) * 10) / 10 : null
+  const rows = [
+    { id: "A" as const, title: "A · Original", chords: original, average: analysisA.averageScore },
+    { id: "B" as const, title: "B · Variante", chords: variant, average: analysisB?.averageScore ?? null },
+  ]
+
+  return (
+    <section aria-labelledby="compare-title" className="rounded-xl border-2 border-ink bg-canvas p-5 shadow-card">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink-mute">Comparar</p>
+          <h3 id="compare-title" className="font-display text-2xl">¿A o B?</h3>
+        </div>
+        {delta !== null ? (
+          <p className={`text-sm font-semibold ${delta >= 0 ? "text-fn-tonic" : "text-fn-dominant"}`}>
+            {delta === 0 ? "Misma fluidez media" : delta > 0 ? `B es ${delta} puntos más fluida` : `B tiene ${Math.abs(delta)} puntos más de tensión`}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="mt-4 flex flex-col gap-3">
+        {rows.map(row => (
+          <div key={row.id} className="flex flex-col gap-3 rounded-lg bg-canvas-soft p-3 sm:flex-row sm:items-center">
+            <button
+              type="button"
+              onClick={() => onPlay(row.id)}
+              disabled={row.id === "B" && !analysisB}
+              className="min-h-11 shrink-0 rounded-md bg-primary px-4 font-bold text-on-primary hover:bg-primary-deep disabled:opacity-50"
+            >
+              {playingId === row.id ? "■" : "▶"} {row.id}
+            </button>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-ink-mute">{row.title}</p>
+              <p className="mt-1 flex flex-wrap gap-1.5 font-mono">
+                {row.chords.map((chord, index) => (
+                  <span
+                    key={`${chord}-${index}`}
+                    className={`rounded px-1.5 ${row.id === "B" && changed.has(index) ? "bg-surface-violet-soft/60 font-bold" : ""} ${playingId === row.id && playingIndex === index ? "ring-2 ring-ink" : ""}`}
+                  >
+                    {chord}
+                  </span>
+                ))}
+              </p>
+            </div>
+            <p className="shrink-0 font-mono text-sm text-ink-mute">{row.average !== null ? `fluidez ${row.average}` : loading ? "analizando..." : "-"}</p>
+          </div>
+        ))}
+      </div>
+
+      {error ? <p role="alert" className="mt-3 text-sm text-fn-dominant">{error}</p> : null}
+
+      {analysisB ? (
+        <ul className="mt-4 grid gap-2 sm:grid-cols-2">
+          {Array.from(changed).map(index => {
+            const before = analysisA.degrees[index]
+            const after = analysisB.degrees[index]
+            if (!after) return null
+            return (
+              <li key={index} className="rounded-lg border border-hairline p-3 text-sm">
+                <p className="font-mono">
+                  {before?.input ?? "—"} <span className="text-ink-mute">({before?.numeral})</span> → <strong>{after.input}</strong>{" "}
+                  <span style={{ color: functionColor(after.function, after.role) }}>({after.numeral} · {functionLabel(after.function, after.role)})</span>
+                </p>
+                <p className="mt-1 text-ink-mute">{after.explanation}</p>
+              </li>
+            )
+          })}
+        </ul>
+      ) : null}
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button type="button" onClick={onKeep} disabled={!analysisB} className="min-h-11 rounded-md bg-surface-teal-deep px-4 font-bold text-on-primary hover:bg-surface-teal-mid disabled:opacity-50">Quedarme con B</button>
+        {onSaveBoth ? (
+          <button type="button" onClick={onSaveBoth} disabled={!analysisB || saving} className="min-h-11 rounded-md border border-ink/20 px-4 font-semibold hover:border-ink disabled:opacity-50">
+            {user ? "Guardar A y B" : "Entrar y guardar A y B"}
+          </button>
+        ) : null}
+        <button type="button" onClick={onDiscard} className="min-h-11 rounded-md px-4 font-semibold text-ink-mute hover:text-ink">Descartar variante</button>
+      </div>
+    </section>
   )
 }
 

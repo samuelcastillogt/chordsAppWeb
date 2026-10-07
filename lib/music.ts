@@ -17,15 +17,6 @@ export const NOTE_OFFSETS: Record<string, number> = {
 
 export const CHROMATIC_NOTES = Object.keys(NOTE_OFFSETS)
 
-export const CHORD_TYPE_RING: Record<string, number> = {
-  major: 0,
-  minor: 1,
-  dom7: 2,
-  dim: 3,
-  aug: 4,
-  dim7: 5,
-}
-
 const INTERVAL_NAMES = [
   "unisono",
   "segunda menor",
@@ -121,10 +112,6 @@ export function getCircleDistance(a: number, b: number): number {
   return Math.min(distance, 12 - distance)
 }
 
-export function getChordRing(type: string): number {
-  return CHORD_TYPE_RING[type] ?? 6
-}
-
 export function noteToFrequency(note: string, octave = 4): number {
   const offset = NOTE_OFFSETS[note]
   if (offset === undefined) return 261.63
@@ -137,15 +124,6 @@ export function categoryColor(category: string): string {
   if (category === "media") return "#eab308"
   if (category === "tensa") return "#f97316"
   return "#ef4444"
-}
-
-export function chordFamilyColor(type: string): string {
-  if (type === "major" || type === "maj7" || type === "add9" || type === "6") return "#f472b6"
-  if (type === "minor" || type === "m7" || type === "m6") return "#38bdf8"
-  if (type === "dim" || type === "dim7" || type === "m7b5") return "#8b5cf6"
-  if (type === "dom7" || type === "9") return "#facc15"
-  if (type === "aug") return "#22c55e"
-  return "#c9b4fa"
 }
 
 /** Colour of a harmonic function (tónica, subdominante, dominante) or chord role. */

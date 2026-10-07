@@ -41,6 +41,13 @@ The explorer uses these backend endpoints:
 
 `components/Analyzer.tsx` is the entry point of the product. The submitted text is split with `splitChordInput`, normalised with `/chords/parse` (unknown tokens such as `x2` or `N.C.` are listed as ignored) and analysed with `/analyze`. The whole pipeline is a React Query query keyed by the submitted text and key, so deep links (`?chords=`), example buttons and substitution clicks all reuse the same code path and cache. Each degree card can replace its chord with a suggested substitution, which rewrites the input and re-runs the analysis.
 
+## Suggestions, Playback And Export
+
+- `lib/suggestions.ts` turns `/connections` (requested with `max_results=60`) into the sidebar list. Intention modes map to engine categories (`safe` = natural, `interesting` = media, `bold` = tensa + extrema). Style presets re-weight the seven raw criteria from `breakdown` (pop favours tonal fit, jazz-lite dominant chains and voice leading, cinematic parallel/relative moves and bridge notes); `balanced` keeps the engine score. The short explanation is the detail text of the two criteria with the highest weighted contribution. Everything is client-side, so no API change was needed.
+- `lib/audio.ts → playSequence` schedules one chord at a time through a master gain node, which allows tempo (2 beats per chord), loop, volume and an immediate stop. `lib/usePlayer.ts` keeps one playback per screen and exposes the sounding index used to highlight chips and degree cards. Suggestion previews play `source → target` with the same player.
+- The analyzer's substitutions no longer rewrite the input: they build variant B on top of A. B is analysed in A's key with the same React Query pipeline (`analyzeText`), and `CompareAB` shows both, the average-fluency delta, the changed degrees, and actions to keep B, save A and B (two progressions, the second suffixed "(variante)") or discard.
+- `lib/export.ts` serialises the on-screen SVG (explicit size, paper background, CSS font variables replaced by real font stacks) to SVG or a 2x PNG through a canvas. `lib/midi.ts` writes a format-0 MIDI file (480 PPQ, piano, one block chord per two beats at the current tempo).
+
 ## Screen Architecture
 
 `app/explorer/page.tsx` owns the main application state:
@@ -52,29 +59,32 @@ The explorer uses these backend endpoints:
 - `mode`: `connections` or `mandala` graph mode.
 - `selectedProgressionId`: controls create vs update behavior.
 - `isTablatureModalOpen`: controls the generated tablature export modal.
+- `suggestionMode` / `stylePreset`: intention filter and ranking preset for suggestions (the graph shows the same filtered list).
+- `dragIndex`: chip being dragged while reordering the progression.
+- `pendingDelete`: progression awaiting confirmation in `ConfirmDialog`.
 - `message` and `errorMessage`: local user feedback after mutations and failures.
 
 TanStack Query separates reads from writes. Reads are keyed by chord, tonality, and collection names. Mutations invalidate `progressions` after save/delete so the library stays current without a full page refresh.
 
 ## Harmonic Map
 
-`components/ChordGraph.tsx` renders all SVG children imperatively with D3 inside `useEffect`.
+Two views share the map card in the explorer.
 
-In `connections` mode:
+`components/ChordGraph.tsx` (options map, D3): the selected chord in the centre and its ranked connections placed by circle-of-fifths distance, links coloured by category and weighted by score.
 
-- The selected source chord is centered.
-- Recommended target chords are placed around it using circle-of-fifths distance.
-- Links are colored by tension category and weighted by score.
+`components/HarmonicMandala.tsx` (harmonic mandala, declarative SVG) takes the idea of Brian Callipari's *Armonía Ilustrada* (chords connected by arrows that show where you can go, including paths to other tonal regions) and makes it a live, key-aware map. Geometry and theory live in `lib/mandala.ts`:
 
-In `mandala` mode:
+- **Rings by family, aligned spokes.** Outside in: dominant 7ths, majors, minors, diminished, augmented (off by default). Minors sit under their relative major, diminished chords under the major key where they are vii°, and each dominant 7th orbits right outside the chord it resolves to (G7 above C). A key therefore occupies one petal of three spokes: IV · I · V on top, ii · vi · iii under them and vii° in the middle (VI · III · VII / iv · i · v / ii° in minor).
+- **Rotates with the key.** The tonic petal is always on top. The parallel key's petal (three spokes away) is tinted violet: that's where borrowed chords come from, so changing tonal region is literally moving to a neighbouring petal.
+- **Colour = function in the selected key**, with the same tokens as the analyzer (tonic, subdominant, dominant, borrowed; secondary dominants as dominant). `degreeInKey` computes numerals client-side (diatonic → borrowed → secondary dominant → outside). Chords outside the key are drawn as paper nodes.
+- **Paths:** the top 8 ranked connections from the selected chord as curved arrows coloured by category, so the explorer's intention modes and style presets filter the mandala too. Extensions (`Cmaj7`, `Am7`, `Bm7b5`, `G9`) land on their family node through `mandalaNodeId`; the hover card names the best variant.
+- **Thread:** the current progression is woven over the mandala as a golden thread with numbered steps; the segment that is sounding is highlighted during playback.
+- **Focus:** hovering or focusing a node dims everything unrelated and shows a card with numeral, function and, when there is a path, its score and explanation. Layers (key, paths, thread) and families can be toggled.
+- **Audition before adding:** clicking (or Enter on) a node pins its card instead of changing the selection. From there you can play the chord alone, the move from the current chord, and the last three chords of the progression followed by it; pick the plain chord or the extension the engine ranked higher (Em / Em7); then add it to the progression or explore from it. Escape or × closes the card; on phones it flows below the mandala. While connections reload the mandala stays mounted so the card survives an add.
 
-- Every chord is visible.
-- Chord families are separated into rings by `getChordRing`.
-- Major chords follow the outer circle-of-fifths loop.
-- Relative major/minor relationships are drawn with subtle teal links.
-- Active connection lines originate from the actual selected source node.
+This replaced an earlier D3 mandala that drew relative-minor links to the wrong chord (C ↔ D#m instead of C ↔ Am), had no nodes for the 7th chords the engine recommends (their arrows fell into the centre) and coloured by chord family instead of function.
 
-Graph nodes are interactive with mouse and keyboard. Each node has `tabindex`, `role="button"`, and an `aria-label`; pressing Enter or Space selects the chord.
+Nodes in both views are keyboard accessible (`tabindex`, `role="button"`, Enter/Space selects).
 
 ## Music Helpers
 
@@ -139,10 +149,12 @@ The layout follows the product design file:
 ## Known Limitations
 
 - Saved progressions are persisted per user in the API database. On Vercel they only survive restarts when `DATABASE_URL` points to PostgreSQL; without `SECRET_KEY` the server disables accounts and the UI hides saving.
-- Playback uses simple synthesized triads, not sampled instruments or inversions.
+- Playback uses simple synthesized chords, not sampled instruments or inversions. `tone` is still a dependency but unused.
+- Shown/applied suggestions are not tracked yet: the PRD's recommendation history needs an API endpoint and a privacy decision.
+- Variants are saved as two separate progressions; the API has no variant relation.
+- There is no dark mode or onboarding. The mandala uses sharps for every root because the catalog does (A#, not Bb).
 - The SVG graph is redrawn on relevant data changes instead of using fine-grained D3 updates. This is acceptable for the current catalog size.
-- Confirmation uses `window.confirm`; a custom modal would provide stronger visual consistency if destructive actions become more prominent.
-- No browser E2E suite exists yet. Current automated coverage is helper-level (`lib/music.ts`) plus Next production build; the analyzer, auth and sharing flows were verified manually against a local API.
+- No browser E2E suite exists yet. Automated coverage is helper-level (`lib/music.test.ts`, `lib/suggestions.test.ts`, `lib/progression.test.ts`: ranking, reordering, A/B diff, MIDI bytes, file names) plus the Next production build; the UI flows were verified manually against a local API.
 
 ## Verification
 

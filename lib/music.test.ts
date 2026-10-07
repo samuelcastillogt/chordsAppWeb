@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { buildGuitarFretboard, categoryColor, chordFamilyColor, connectionLabel, findCompatibleChords, functionColor, functionLabel, getChordRing, getCircleDistance, getChordRoot, getIntervalName, noteToFrequency, splitChordInput } from "@/lib/music"
+import { buildGuitarFretboard, categoryColor, connectionLabel, findCompatibleChords, functionColor, functionLabel, getCircleDistance, getChordRoot, getIntervalName, noteToFrequency, splitChordInput } from "@/lib/music"
 import { Chord } from "@/types"
 
 describe("music helpers", () => {
@@ -16,14 +16,6 @@ describe("music helpers", () => {
     expect(categoryColor("extrema")).toBe("#ef4444")
   })
 
-  it("maps chord families to mandala colors", () => {
-    expect(chordFamilyColor("major")).toBe("#f472b6")
-    expect(chordFamilyColor("minor")).toBe("#38bdf8")
-    expect(chordFamilyColor("dim7")).toBe("#8b5cf6")
-    expect(chordFamilyColor("dom7")).toBe("#facc15")
-    expect(chordFamilyColor("aug")).toBe("#22c55e")
-  })
-
   it("extracts chord roots and names intervals from the base note", () => {
     expect(getChordRoot("C#m")).toBe("C#")
     expect(getChordRoot("G7")).toBe("G")
@@ -31,13 +23,10 @@ describe("music helpers", () => {
     expect(getIntervalName("C", "F#")).toBe("tritono")
   })
 
-  it("calculates fifth-circle distances and chord family rings", () => {
+  it("calculates fifth-circle distances", () => {
     expect(getCircleDistance(0, 1)).toBe(1)
     expect(getCircleDistance(0, 11)).toBe(1)
     expect(getCircleDistance(0, 6)).toBe(6)
-    expect(getChordRing("major")).toBe(0)
-    expect(getChordRing("minor")).toBe(1)
-    expect(getChordRing("dim7")).toBe(5)
   })
 
   it("builds guitar fretboard positions for chord intervals", () => {
@@ -77,11 +66,5 @@ describe("music helpers", () => {
     expect(functionColor("SD", "borrowed")).toBe("#7b5cd6")
     expect(functionLabel("D", "secondary_dominant")).toBe("Dominante secundaria")
     expect(functionLabel("SD", "diatonic")).toBe("Subdominante")
-  })
-
-  it("maps extended chord types to their family colour", () => {
-    expect(chordFamilyColor("maj7")).toBe(chordFamilyColor("major"))
-    expect(chordFamilyColor("m7")).toBe(chordFamilyColor("minor"))
-    expect(chordFamilyColor("m7b5")).toBe(chordFamilyColor("dim"))
   })
 })
