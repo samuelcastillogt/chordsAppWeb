@@ -58,7 +58,8 @@ const STYLE_WEIGHTS: Record<Exclude<StylePreset, "balanced">, Record<Criterion, 
 
 /** Score of a connection under a style preset, on the same 0-100 scale as the engine. */
 export function styleScore(connection: Connection, preset: StylePreset): number {
-  if (preset === "balanced") return connection.score
+  // A band style already blended its habits with the engine: presets would undo that.
+  if (preset === "balanced" || connection.style) return connection.score
   const weights = STYLE_WEIGHTS[preset]
   const total = CRITERIA.reduce((sum, name) => sum + (connection.breakdown[name]?.raw ?? 0) * weights[name], 0)
   return Math.round(total * 10) / 10
@@ -78,6 +79,7 @@ export function rankSuggestions(connections: Connection[], mode: SuggestionMode,
 
 /** Short human explanation: the details of the two criteria that contribute most. */
 export function explainConnection(connection: Connection): string {
+  if (connection.style) return connection.style.evidence
   return Object.entries(connection.breakdown)
     .filter(([, item]) => item.weighted > 0 && item.detail)
     .sort(([, a], [, b]) => b.weighted - a.weighted)

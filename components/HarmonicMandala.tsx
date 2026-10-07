@@ -19,6 +19,7 @@ import {
   petalPath,
 } from "@/lib/mandala"
 import { categoryColor, connectionLabel, functionColor, functionLabel } from "@/lib/music"
+import { stepsByChord } from "@/lib/trail"
 import { Chord, Connection } from "@/types"
 
 type Path = Connection & { explanation?: string }
@@ -30,8 +31,16 @@ type Props = {
   /** Ranked connections from the selected chord (already filtered by intention/style). */
   connections: Path[]
   progression: string[]
+  /** Chords picked on the mandala, in order. They stay marked until the user clears them. */
+  trail: string[]
+  /** Band-style continuation from the current chord, drawn as a dashed path. */
+  phrase?: string[]
   playingIndex: number | null
-  onSelect: (chord: string) => void
+  /** Makes `chord` the current chord and appends it to the trail. */
+  onPick: (chord: string) => void
+  onUndoTrail: () => void
+  onClearTrail: () => void
+  onTrailToProgression: () => void
   /** Adds a chord to the end of the progression. */
   onAdd: (chord: string) => void
   /** Plays a short sequence of chord ids; `id` identifies it so the button can show it is sounding. */
@@ -40,20 +49,23 @@ type Props = {
   playingId: string | null
 }
 
-type Layer = "key" | "paths" | "thread"
+type Layer = "key" | "paths" | "thread" | "trail"
 
 const MAX_PATHS = 8
+const TRAIL_COLOR = "#7b5cd6"
 // Room for the outer ring's numerals.
 const VIEW_PAD = 28
 const CATEGORIES: Connection["category"][] = ["natural", "media", "tensa", "extrema"]
 
 export default function HarmonicMandala(props: Props) {
-  const { chords, selected, tonality, connections, progression, playingIndex, onSelect, onAdd, onPreview, onStopPreview, playingId } = props
-  const [layers, setLayers] = useState<Record<Layer, boolean>>({ key: true, paths: true, thread: true })
+  const { chords, selected, tonality, connections, progression, trail, phrase = [], playingIndex, onPick, onAdd, onPreview, onStopPreview, playingId } = props
+  const [layers, setLayers] = useState<Record<Layer, boolean>>({ key: true, paths: true, thread: true, trail: true })
   const [families, setFamilies] = useState<Record<MandalaFamily, boolean>>({ dominant: true, major: true, minor: true, diminished: true, augmented: false })
   const [hovered, setHovered] = useState<string | null>(null)
-  // Clicking a node pins its card so the chord can be auditioned before adding or exploring it.
+  // Clicking a node makes it the current chord and pins its card to audition it before adding it.
   const [pinned, setPinned] = useState<string | null>(null)
+  // The variant the arrow recommended for the node just picked (Am → Am7), offered in its card.
+  const [variant, setVariant] = useState<string | null>(null)
 
   useEffect(() => {
     if (!pinned) return
@@ -101,10 +113,26 @@ export default function HarmonicMandala(props: Props) {
   const stepsByNode = new Map<string, number[]>()
   threadNodes.forEach(({ node, index }) => stepsByNode.set(node.id, [...(stepsByNode.get(node.id) ?? []), index + 1]))
 
+  const trailNodes = trail.map(id => nodeById.get(toNode(id)) ?? null).filter((node): node is MandalaNode => node !== null)
+  const trailSteps = stepsByChord(trail, toNode)
+  const phraseNodes = [selectedNode, ...phrase.map(id => nodeById.get(toNode(id)) ?? null)].filter((node): node is MandalaNode => node !== null)
+
+  // Picked chords never fade: hovering only dims what is not part of the walk.
   const focusId = hovered ?? pinned
   const focus = focusId
-    ? new Set([focusId, pinned ?? "", selectedNode?.id ?? "", ...(focusId === selectedNode?.id ? paths.map(path => path.node.id) : [])])
+    ? new Set([focusId, pinned ?? "", selectedNode?.id ?? "", ...trailSteps.keys(), ...(focusId === selectedNode?.id ? paths.map(path => path.node.id) : [])])
     : null
+
+  // Clicking moves the walk to exactly the chord on the node; its card offers the recommended variant.
+  const pick = (node: MandalaNode) => {
+    if (node.id === selectedNode?.id) {
+      setPinned(current => (current === node.id ? null : node.id))
+      return
+    }
+    setVariant(pathByNode.get(node.id)?.connection.target ?? null)
+    onPick(node.id)
+    setPinned(node.id)
+  }
   // A pinned card wins over hover so its buttons stay reachable.
   const cardId = pinned ?? hovered
   const cardNode = cardId ? nodeById.get(cardId) ?? null : null
@@ -120,6 +148,7 @@ export default function HarmonicMandala(props: Props) {
           <Toggle on={layers.key} onClick={() => setLayers(current => ({ ...current, key: !current.key }))}>Tonalidad</Toggle>
           <Toggle on={layers.paths} onClick={() => setLayers(current => ({ ...current, paths: !current.paths }))}>Caminos</Toggle>
           <Toggle on={layers.thread} onClick={() => setLayers(current => ({ ...current, thread: !current.thread }))}>Hilo de tu progresión</Toggle>
+          <Toggle on={layers.trail} onClick={() => setLayers(current => ({ ...current, trail: !current.trail }))}>Recorrido</Toggle>
         </fieldset>
         <fieldset className="flex flex-wrap items-center gap-1.5">
           <legend className="sr-only">Familias</legend>
@@ -130,6 +159,8 @@ export default function HarmonicMandala(props: Props) {
           ))}
         </fieldset>
       </div>
+
+      <TrailBar trail={trail} onUndo={props.onUndoTrail} onClear={props.onClearTrail} onToProgression={props.onTrailToProgression} />
 
       <div className="relative">
         <svg
@@ -184,6 +215,45 @@ export default function HarmonicMandala(props: Props) {
             </g>
           ) : null}
 
+          {/* Trail: every chord picked on the mandala, in order. */}
+          {layers.trail && trailNodes.length > 1 ? (
+            <g fill="none" strokeLinecap="round">
+              {trailNodes.slice(1).map((node, step) => {
+                const from = trailNodes[step]
+                if (from.id === node.id) return null
+                return (
+                  <path
+                    key={`trail-${from.id}-${node.id}-${step}`}
+                    d={curvePath(from, node, 0.12, NODE_RADIUS[from.family] + 3, NODE_RADIUS[node.family] + 3)}
+                    stroke={TRAIL_COLOR}
+                    strokeWidth={3}
+                    strokeOpacity={0.75}
+                  />
+                )
+              })}
+            </g>
+          ) : null}
+
+          {/* How the band would carry on from here. */}
+          {layers.paths && phraseNodes.length > 1 ? (
+            <g fill="none" strokeLinecap="round" aria-hidden="true">
+              {phraseNodes.slice(1).map((node, step) => {
+                const from = phraseNodes[step]
+                if (from.id === node.id) return null
+                return (
+                  <path
+                    key={`phrase-${from.id}-${node.id}-${step}`}
+                    d={curvePath(from, node, 0.3, NODE_RADIUS[from.family] + 4, NODE_RADIUS[node.family] + 4)}
+                    stroke={TRAIL_COLOR}
+                    strokeWidth={2}
+                    strokeDasharray="5 5"
+                    strokeOpacity={focus ? 0.3 : 0.8}
+                  />
+                )
+              })}
+            </g>
+          ) : null}
+
           {/* Paths from the selected chord, coloured by how they sound. */}
           {layers.paths && selectedNode ? (
             <g fill="none" strokeLinecap="round">
@@ -210,6 +280,7 @@ export default function HarmonicMandala(props: Props) {
             const fill = inKey ? functionColor(degree.function, degree.role) : "#fffdf8"
             const isSelected = node.id === selectedNode?.id
             const steps = layers.thread ? stepsByNode.get(node.id) : undefined
+            const walked = layers.trail ? trailSteps.get(node.id) : undefined
             const dimmed = focus ? !focus.has(node.id) : false
             const r = NODE_RADIUS[node.family] + (isSelected ? 4 : 0)
             const label = labelOf(node)
@@ -228,14 +299,14 @@ export default function HarmonicMandala(props: Props) {
                 opacity={dimmed ? 0.28 : 1}
                 tabIndex={0}
                 role="button"
-                aria-label={`${label}${degree ? `, ${degree.numeral}, ${functionLabel(degree.function, degree.role)}` : ", fuera de la tonalidad"}`}
+                aria-label={`${label}${degree ? `, ${degree.numeral}, ${functionLabel(degree.function, degree.role)}` : ", fuera de la tonalidad"}${walked ? `, paso ${walked.join(" y ")} del recorrido` : ""}`}
                 aria-pressed={isSelected}
                 aria-expanded={pinned === node.id}
-                onClick={() => setPinned(current => (current === node.id ? null : node.id))}
+                onClick={() => pick(node)}
                 onKeyDown={event => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault()
-                    setPinned(current => (current === node.id ? null : node.id))
+                    pick(node)
                   }
                 }}
                 onMouseEnter={() => setHovered(node.id)}
@@ -244,6 +315,7 @@ export default function HarmonicMandala(props: Props) {
                 className="cursor-pointer outline-none [&:focus-visible>circle:first-child]:stroke-[#f2c14e]"
                 style={{ transition: "opacity 160ms" }}
               >
+                {walked && !isSelected ? <circle r={r + 5} fill="none" stroke={TRAIL_COLOR} strokeWidth={3} /> : null}
                 {isSelected ? <circle r={r + 6} fill="none" stroke="#1f1b16" strokeWidth={2} strokeDasharray="3 3" /> : null}
                 {pinned === node.id && !isSelected ? <circle r={r + 6} fill="none" stroke="#f2c14e" strokeWidth={3} /> : null}
                 <circle r={r} fill={fill} stroke={inKey ? "#fffdf8" : "#cfc5b3"} strokeWidth={isSelected ? 3 : 1.5} />
@@ -272,6 +344,12 @@ export default function HarmonicMandala(props: Props) {
                     {degree.numeral}
                   </text>
                 ) : null}
+                {walked ? (
+                  <g transform={`translate(${-r * 0.75},${r * 0.75})`} pointerEvents="none">
+                    <circle r={walked.length > 1 ? 9 : 7} fill={TRAIL_COLOR} stroke="#fffdf8" strokeWidth={1.5} />
+                    <text textAnchor="middle" y={3} fontSize={walked.length > 1 ? 7 : 8} fontWeight={700} fill="#fffdf8">{walked.slice(-2).join("·")}</text>
+                  </g>
+                ) : null}
                 {steps ? (
                   <g transform={`translate(${r * 0.75},${-r * 0.75})`} pointerEvents="none">
                     <circle r={steps.length > 1 ? 9 : 7} fill="#1f1b16" stroke="#f2c14e" strokeWidth={1.5} />
@@ -294,17 +372,14 @@ export default function HarmonicMandala(props: Props) {
               pinned === cardNode.id
                 ? {
                     // Offer the node's own chord and, when the engine ranked an extension higher, that variant.
-                    options: Array.from(new Set([cardNode.id === selectedNode?.id ? selected : cardNode.id, cardPath?.connection.target ?? cardNode.id])),
-                    source: selected,
+                    options: Array.from(new Set([cardNode.id === selectedNode?.id ? selected : cardNode.id, (cardNode.id === selectedNode?.id ? variant : cardPath?.connection.target) ?? cardNode.id])),
+                    previous: cardNode.id === selectedNode?.id ? trail[trail.length - 2] ?? null : selected,
                     progression,
                     playingId,
                     onPreview,
                     onStopPreview,
                     onAdd,
-                    onExplore: chord => {
-                      onSelect(chord)
-                      setPinned(null)
-                    },
+                    onPick: chord => onPick(chord),
                     onClose: () => setPinned(null),
                   }
                 : null
@@ -314,6 +389,30 @@ export default function HarmonicMandala(props: Props) {
       </div>
 
       <Legend keyLabel={key.label} mode={key.mode} parallelLabel={`${key.label.split(" ")[0]} ${key.mode === "major" ? "menor" : "mayor"}`} />
+    </div>
+  )
+}
+
+function TrailBar({ trail, onUndo, onClear, onToProgression }: { trail: string[]; onUndo: () => void; onClear: () => void; onToProgression: () => void }) {
+  if (trail.length === 0) {
+    return <p className="rounded-md border border-dashed border-hairline px-3 py-2 text-xs text-ink-mute">Toca un acorde del mandala para empezar tu recorrido: se quedará marcado y las flechas te mostrarán por dónde seguir.</p>
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-hairline bg-canvas px-3 py-2 text-xs">
+      <span className="font-semibold uppercase tracking-[0.14em] text-ink-mute">Recorrido</span>
+      <ol className="flex flex-wrap items-center gap-1 font-mono font-semibold" aria-label="Acordes del recorrido">
+        {trail.map((chord, index) => (
+          <li key={`${chord}-${index}`} className="flex items-center gap-1">
+            {index > 0 ? <span aria-hidden="true" className="text-ink-mute">→</span> : null}
+            <span className="rounded-full px-2 py-0.5 text-[#fffdf8]" style={{ backgroundColor: TRAIL_COLOR }}>{chord}</span>
+          </li>
+        ))}
+      </ol>
+      <span className="ml-auto flex gap-1">
+        <button type="button" onClick={onUndo} className="min-h-8 rounded-md border border-hairline px-2 font-semibold hover:border-ink">Deshacer</button>
+        <button type="button" onClick={onClear} className="min-h-8 rounded-md border border-hairline px-2 font-semibold hover:border-ink">Limpiar</button>
+        <button type="button" onClick={onToProgression} disabled={trail.length < 2} className="min-h-8 rounded-md bg-primary px-2 font-bold text-on-primary hover:bg-primary-deep disabled:opacity-50">Usar como progresión</button>
+      </span>
     </div>
   )
 }
@@ -333,13 +432,14 @@ function Toggle({ on, onClick, children }: { on: boolean; onClick: () => void; c
 
 type CardActions = {
   options: string[]
-  source: string
+  /** Chord the walk comes from, to hear the move into this one. */
+  previous: string | null
   progression: string[]
   playingId: string | null
   onPreview: (chordIds: string[], id: string) => void
   onStopPreview: () => void
   onAdd: (chord: string) => void
-  onExplore: (chord: string) => void
+  onPick: (chord: string) => void
   onClose: () => void
 }
 
@@ -371,7 +471,7 @@ function NodeCard({ node, path, source, isSource, pathCount, actions }: CardProp
         {degree ? functionLabel(degree.function, degree.role) : "Fuera de la tonalidad"}
       </p>
       {isSource ? (
-        <p className="mt-2 text-ink-mute">Acorde actual. Las flechas muestran {pathCount} caminos para seguir.</p>
+        <p className="mt-2 text-ink-mute">Acorde actual. Las flechas muestran {pathCount} caminos para seguir; toca uno para avanzar.</p>
       ) : path ? (
         <div className="mt-2 border-t border-hairline pt-2">
           <p>
@@ -383,7 +483,7 @@ function NodeCard({ node, path, source, isSource, pathCount, actions }: CardProp
           {path.connection.target !== node.id ? <p className="mt-1 text-ink-mute">Mejor variante: <span className="font-mono">{path.connection.target}</span></p> : null}
         </div>
       ) : (
-        <p className="mt-2 text-ink-mute">{actions ? "No está entre los caminos sugeridos, pero puedes probarlo." : "Clic para escucharlo y decidir."}</p>
+        <p className="mt-2 text-ink-mute">{actions ? "No está entre los caminos sugeridos, pero puedes probarlo." : "Clic para avanzar hasta aquí."}</p>
       )}
       {actions ? <Audition key={node.id} {...actions} isSource={isSource} /> : null}
     </div>
@@ -391,14 +491,14 @@ function NodeCard({ node, path, source, isSource, pathCount, actions }: CardProp
 }
 
 /** Listen to a candidate alone, after the current chord and at the end of the progression, then decide. */
-function Audition({ options, source, progression, playingId, onPreview, onStopPreview, onAdd, onExplore, isSource }: CardActions & { isSource: boolean }) {
+function Audition({ options, previous, progression, playingId, onPreview, onStopPreview, onAdd, onPick, isSource }: CardActions & { isSource: boolean }) {
   const [chord, setChord] = useState(options[0])
   const [added, setAdded] = useState<number | null>(null)
 
   const tail = progression.slice(-3)
   const listens = [
     { id: `mandala:solo:${chord}`, label: `▶ ${chord}`, chords: [chord] },
-    ...(!isSource && source !== chord ? [{ id: `mandala:from:${chord}`, label: `▶ ${source} → ${chord}`, chords: [source, chord] }] : []),
+    ...(previous && previous !== chord ? [{ id: `mandala:from:${chord}`, label: `▶ ${previous} → ${chord}`, chords: [previous, chord] }] : []),
     ...(tail.length ? [{ id: `mandala:tail:${chord}`, label: `▶ Tu progresión + ${chord}`, chords: [...tail, chord] }] : []),
   ]
 
@@ -445,11 +545,11 @@ function Audition({ options, source, progression, playingId, onPreview, onStopPr
           }}
           className="min-h-9 flex-1 rounded-md bg-primary px-2 font-bold text-on-primary hover:bg-primary-deep"
         >
-          Agregar
+          Agregar a la progresión
         </button>
         {!isSource ? (
-          <button type="button" onClick={() => onExplore(chord)} className="min-h-9 flex-1 rounded-md border border-hairline px-2 font-semibold hover:border-ink">
-            Explorar desde aquí
+          <button type="button" onClick={() => onPick(chord)} className="min-h-9 flex-1 rounded-md border border-hairline px-2 font-semibold hover:border-ink">
+            Avanzar aquí
           </button>
         ) : null}
       </div>
@@ -490,7 +590,8 @@ function Legend({ keyLabel, mode, parallelLabel }: { keyLabel: string; mode: "ma
           {CATEGORIES.map(category => (
             <li key={category}><span className="mr-1 inline-block h-0.5 w-4 align-middle" style={{ backgroundColor: categoryColor(category) }} />{connectionLabel(category)}</li>
           ))}
-          <li className="col-span-2"><span className="mr-1 inline-block h-1.5 w-4 rounded-full bg-surface-violet-soft align-middle" />Tu progresión, numerada</li>
+          <li className="col-span-2"><span className="mr-1 inline-block h-1.5 w-4 rounded-full bg-[#f2c14e] align-middle" />Tu progresión, numerada</li>
+          <li className="col-span-2"><span className="mr-1 inline-block h-1.5 w-4 rounded-full align-middle" style={{ backgroundColor: TRAIL_COLOR }} />Tu recorrido (punteado: cómo seguiría la banda)</li>
         </ul>
       </div>
     </div>

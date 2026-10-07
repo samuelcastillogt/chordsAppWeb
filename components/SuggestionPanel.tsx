@@ -10,6 +10,8 @@ type Props = {
   suggestions: RankedSuggestion[]
   mode: SuggestionMode
   preset: StylePreset
+  /** Active band style: suggestions are already ordered by it, so presets are hidden. */
+  styleName?: string
   onModeChange: (mode: SuggestionMode) => void
   onPresetChange: (preset: StylePreset) => void
   onSelect: (chord: string) => void
@@ -21,7 +23,7 @@ type Props = {
 
 /** "Qué puede seguir": intention modes, style presets and explained, audible suggestions. */
 export default function SuggestionPanel(props: Props) {
-  const { source, suggestions, mode, preset, onModeChange, onPresetChange, onSelect, onAdd, onPreview, previewing, loading } = props
+  const { source, suggestions, mode, preset, styleName, onModeChange, onPresetChange, onSelect, onAdd, onPreview, previewing, loading } = props
   const [expanded, setExpanded] = useState<string | null>(null)
   const modeHint = SUGGESTION_MODES.find(item => item.id === mode)?.hint
   const presetHint = STYLE_PRESETS.find(item => item.id === preset)?.hint
@@ -44,6 +46,10 @@ export default function SuggestionPanel(props: Props) {
       </div>
       <p className="mt-2 text-xs text-ink-mute">{modeHint}</p>
 
+      {styleName ? (
+        <p className="mt-3 rounded-md bg-surface-violet-soft/30 p-2 text-xs text-ink">Ordenadas por el estilo de <strong>{styleName}</strong> combinado con la teoría.</p>
+      ) : (
+      <>
       <label className="mt-3 flex flex-col gap-1 text-xs font-semibold uppercase tracking-[0.14em] text-ink-mute">
         Estilo
         <select
@@ -55,6 +61,8 @@ export default function SuggestionPanel(props: Props) {
         </select>
       </label>
       <p className="mt-1 text-xs text-ink-mute">{presetHint}</p>
+      </>
+      )}
 
       <ul className="mt-4 max-h-[560px] space-y-2 overflow-auto pr-1 text-sm">
         {loading
@@ -73,7 +81,7 @@ export default function SuggestionPanel(props: Props) {
                     <strong className="font-mono text-base">{suggestion.target}</strong>
                     <span className="ml-2 text-xs font-semibold" style={{ color: categoryColor(suggestion.category) }}>{connectionLabel(suggestion.category)}</span>
                   </span>
-                  <span className="font-mono" title={preset === "balanced" ? "Puntuación del motor" : `Puntuación ${STYLE_PRESETS.find(item => item.id === preset)?.label} (motor: ${suggestion.score})`}>
+                  <span className="font-mono" title={suggestion.style ? `Banda ${suggestion.style.score} · motor ${suggestion.engineScore}` : preset === "balanced" ? "Puntuación del motor" : `Puntuación ${STYLE_PRESETS.find(item => item.id === preset)?.label} (motor: ${suggestion.score})`}>
                     {suggestion.rankScore}
                   </span>
                 </button>

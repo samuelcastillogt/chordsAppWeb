@@ -9,6 +9,7 @@ import { useAuth } from "@/lib/auth"
 const LINKS = [
   { href: "/", label: "Analizar" },
   { href: "/explorer", label: "Explorar" },
+  { href: "/estilo", label: "Estilo de banda" },
   { href: "/fretboard", label: "Mástil" },
   { href: "/piano", label: "Piano" },
   { href: "/progressions", label: "Mis progresiones" },

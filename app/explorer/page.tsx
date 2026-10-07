@@ -10,6 +10,7 @@ import ConfirmDialog from "@/components/ConfirmDialog"
 import GuitarFretboard from "@/components/GuitarFretboard"
 import HarmonicMandala from "@/components/HarmonicMandala"
 import PlayerControls from "@/components/PlayerControls"
+import StylePicker from "@/components/StylePicker"
 import SuggestionPanel from "@/components/SuggestionPanel"
 import TensionCurve from "@/components/TensionCurve"
 import { appUrl, del, get, getApiBaseUrl, post, put } from "@/lib/api"
@@ -19,9 +20,11 @@ import { downloadBlob, downloadSvg, downloadSvgAsPng, slugify } from "@/lib/expo
 import { progressionToMidi } from "@/lib/midi"
 import { categoryColor, connectionLabel } from "@/lib/music"
 import { moveItem } from "@/lib/progression"
+import { loadStyles } from "@/lib/style"
 import { StylePreset, SuggestionMode, rankSuggestions } from "@/lib/suggestions"
+import { pushStep, trailContext, undoStep } from "@/lib/trail"
 import { usePlayer } from "@/lib/usePlayer"
-import { AnalyzeResponse, Chord, ConnectionsResponse, ParsedChord, Progression, TablatureResponse } from "@/types"
+import { AnalyzeResponse, Chord, ConnectionsResponse, ParsedChord, Progression, SavedStyle, StyleSuggestResponse, TablatureResponse } from "@/types"
 
 const DEFAULT_PROGRESSION = ["C", "G7", "Am", "F"]
 
@@ -84,6 +87,11 @@ function Explorer() {
   const [stylePreset, setStylePreset] = useState<StylePreset>("balanced")
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [pendingDelete, setPendingDelete] = useState<Progression | null>(null)
+  // Chords picked on the map, in order: they stay marked and give context to the suggestions.
+  const [trail, setTrail] = useState<string[]>([])
+  const [styles, setStyles] = useState<SavedStyle[]>([])
+  const [styleId, setStyleId] = useState<string | null>(null)
+  const [styleWeight, setStyleWeight] = useState(0.65)
   const graphRef = useRef<HTMLDivElement>(null)
   const curveRef = useRef<HTMLDivElement>(null)
   const player = usePlayer()
@@ -100,6 +108,15 @@ function Explorer() {
     enabled: !!selectedChord,
   })
 
+  const activeStyle = styles.find(item => item.id === styleId) ?? null
+  const styleHistory = trailContext(trail, selectedChord)
+  const { data: styleData, isFetching: styleLoading, error: styleError } = useQuery<StyleSuggestResponse>({
+    queryKey: ["style-suggest", styleId, styleHistory.join(","), tonality, styleWeight],
+    queryFn: () => post<StyleSuggestResponse>("/api/v1/style/suggest", { profile: activeStyle?.profile, history: styleHistory, tonality, weight: styleWeight, maxResults: 60 }),
+    enabled: !!activeStyle && !!selectedChord,
+    placeholderData: previous => previous,
+  })
+
   const { data: targetChord } = useQuery<Chord>({
     queryKey: ["chord", selectedChord],
     queryFn: () => get<Chord>(`/api/v1/chords/${selectedChord}`),
@@ -112,10 +129,14 @@ function Explorer() {
     enabled: !!user,
   })
 
-  // Deep links: ?chords=Bm,G,D,A&key=Bm (from the analyzer or the songbook) or ?p=<shared id>.
+  // Deep links: ?chords=Bm,G,D,A&key=Bm (from the analyzer or the songbook), ?p=<shared id>, ?style=<saved style>.
   useEffect(() => {
     if (loadedFromUrl.current) return
     loadedFromUrl.current = true
+    const saved = loadStyles()
+    setStyles(saved)
+    const styleParam = searchParams.get("style")
+    if (styleParam && saved.some(item => item.id === styleParam)) setStyleId(styleParam)
     const sharedId = searchParams.get("p")
     const chordParam = searchParams.get("chords")
     const keyParam = searchParams.get("key")
@@ -134,6 +155,7 @@ function Explorer() {
           if (ids.length) {
             setProgression(ids)
             setSelectedChord(ids[ids.length - 1])
+            setTrail([])
             setProgressionName("Progresión importada")
           }
         })
@@ -200,12 +222,34 @@ function Explorer() {
     onError: error => setErrorMessage(error instanceof Error ? error.message : "No se pudo eliminar la progresión"),
   })
 
+  /** Makes `chord` the current chord and adds it to the walk (already-picked chords stay marked). */
+  const selectChord = (chord: string) => {
+    setSelectedChord(chord)
+    setTrail(current => pushStep(current, chord))
+  }
+
   const addChordToProgression = (chord: string) => {
     analyzeMutation.reset()
     tablatureMutation.reset()
     setProgression(current => [...current, chord])
-    setSelectedChord(chord)
+    selectChord(chord)
     setMessage(`${chord} agregado a tu progresión`)
+  }
+
+  const addChordsToProgression = (chordIds: string[]) => {
+    if (!chordIds.length) return
+    resetResults()
+    setProgression(current => [...current, ...chordIds])
+    chordIds.forEach(selectChord)
+    setMessage(`${chordIds.join(" → ")} agregado a tu progresión`)
+  }
+
+  const trailToProgression = () => {
+    resetResults()
+    setProgression(trail)
+    setSelectedProgressionId(null)
+    setProgressionName("Recorrido del mandala")
+    setMessage(`Tu recorrido ${trail.join(" → ")} es ahora la progresión`)
   }
 
   const resetResults = () => {
@@ -230,6 +274,7 @@ function Explorer() {
     setProgression(saved.chords)
     setTonality(saved.tonality ?? "C")
     setSelectedChord(saved.chords[0] ?? "C")
+    setTrail([])
     analyzeMutation.reset()
     tablatureMutation.reset()
     setMessage(`Progresión cargada: ${saved.name}`)
@@ -283,9 +328,11 @@ function Explorer() {
   }
 
   const analysis = analyzeMutation.data?.analysis
+  // With a band style the backend already blended its habits with the engine's scores.
+  const styledConnections = activeStyle ? styleData?.connections : undefined
   const rankedSuggestions = useMemo(
-    () => rankSuggestions(connectionsData?.connections ?? [], suggestionMode, stylePreset),
-    [connectionsData, suggestionMode, stylePreset],
+    () => rankSuggestions(styledConnections ?? connectionsData?.connections ?? [], suggestionMode, stylePreset),
+    [styledConnections, connectionsData, suggestionMode, stylePreset],
   )
   const previewing = player.playingId?.startsWith("preview:") ? player.playingId.slice(8) : null
   const playingIndex = player.playingId === "progression" ? player.current : null
@@ -323,7 +370,7 @@ function Explorer() {
           </div>
           <div className="rounded-xl border border-hairline-dark bg-primary/70 p-6 shadow-2xl">
             <div className="grid gap-4 sm:grid-cols-2">
-              <ChordSelector label="Acorde actual" chords={chords} value={selectedChord} onChange={setSelectedChord} />
+              <ChordSelector label="Acorde actual" chords={chords} value={selectedChord} onChange={selectChord} />
               <ChordSelector label="Tonalidad" chords={chords.filter(chord => chord.type === "major" || chord.type === "minor")} value={tonality} onChange={setTonality} />
             </div>
             <ol className="mt-6 grid gap-2 text-sm text-on-dark-mute md:grid-cols-3">
@@ -347,7 +394,7 @@ function Explorer() {
               <p className="text-xs font-[540] uppercase tracking-[0.2em] text-ink-mute">Mapa armónico</p>
               <h2 className="mt-2 text-[48px] font-[460] leading-[0.96] tracking-[-1.32px] text-ink">{mode === "mandala" ? `Mandala en ${tonality.endsWith("m") ? `${tonality.slice(0, -1)} menor` : `${tonality} mayor`}` : mode === "fretboard" ? `Intervalos de ${selectedChord}` : `Opciones para ${selectedChord}`}</h2>
             </div>
-            <p className="max-w-sm text-sm leading-6 text-ink-mute">{mode === "mandala" ? "Toda la armonía en un mapa que gira con tu tonalidad. Las flechas son los caminos desde el acorde actual; el hilo dorado es tu progresión." : mode === "fretboard" ? "Cada punto marca un intervalo de la triada sobre el mastil. Solo se ilumina mientras suena." : "Verde suena más natural; rojo crea más tensión. Haz hover para ver el intervalo."}</p>
+            <p className="max-w-sm text-sm leading-6 text-ink-mute">{mode === "mandala" ? "Toca un acorde para avanzar: queda marcado en tu recorrido (violeta) y las flechas muestran los caminos desde él. El hilo dorado es tu progresión." : mode === "fretboard" ? "Cada punto marca un intervalo de la triada sobre el mastil. Solo se ilumina mientras suena." : "Verde suena más natural; rojo crea más tensión. Haz hover para ver el intervalo."}</p>
           </div>
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <label className="sr-only" htmlFor="map-view">Vista</label>
@@ -384,15 +431,24 @@ function Explorer() {
                 tonality={tonality}
                 connections={rankedSuggestions}
                 progression={progression}
+                trail={trail}
+                phrase={activeStyle ? styleData?.phrase.map(step => step.chord) : undefined}
                 playingIndex={playingIndex}
-                onSelect={setSelectedChord}
+                onPick={selectChord}
+                onUndoTrail={() => {
+                  const next = undoStep(trail)
+                  setTrail(next)
+                  if (next.length) setSelectedChord(next[next.length - 1])
+                }}
+                onClearTrail={() => setTrail([])}
+                onTrailToProgression={trailToProgression}
                 onAdd={addChordToProgression}
                 onPreview={(ids, id) => player.play(ids.map(notesOf), id, undefined, { loop: false })}
                 onStopPreview={player.stop}
                 playingId={player.playingId}
               />
             ) : (
-              <ChordGraph sourceChord={targetChord ?? null} connections={rankedSuggestions} chords={chords} onSelectChord={setSelectedChord} />
+              <ChordGraph sourceChord={targetChord ?? null} connections={rankedSuggestions} chords={chords} onSelectChord={selectChord} />
             )}
           </div>
         </div>
@@ -406,18 +462,33 @@ function Explorer() {
             <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#f97316]" />Tensa</span>
             <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-[#ef4444]" />Extrema</span>
           </div>
+          <StylePicker
+            styles={styles}
+            activeId={styleId}
+            weight={styleWeight}
+            onChange={setStyleId}
+            onWeightChange={setStyleWeight}
+            suggestion={activeStyle ? styleData : undefined}
+            loading={styleLoading}
+            error={styleError instanceof Error ? styleError.message : null}
+            playingId={player.playingId}
+            onPlayPhrase={chordIds => player.play([selectedChord, ...chordIds].map(notesOf), "style:phrase", undefined, { loop: false })}
+            onStop={player.stop}
+            onAddPhrase={addChordsToProgression}
+          />
           <SuggestionPanel
             source={selectedChord}
             suggestions={rankedSuggestions}
             mode={suggestionMode}
             preset={stylePreset}
+            styleName={activeStyle?.profile.name}
             onModeChange={setSuggestionMode}
             onPresetChange={setStylePreset}
-            onSelect={setSelectedChord}
+            onSelect={selectChord}
             onAdd={addChordToProgression}
             onPreview={previewSuggestion}
             previewing={previewing}
-            loading={connectionsLoading}
+            loading={activeStyle ? styleLoading && !styleData : connectionsLoading}
           />
         </aside>
       </section>
@@ -469,7 +540,7 @@ function Explorer() {
                   className={`flex min-h-11 cursor-grab items-center gap-0.5 rounded-full border bg-canvas pl-1 pr-1 transition active:cursor-grabbing ${playingIndex === index ? "-translate-y-0.5 border-ink shadow-card" : "border-hairline"} ${dragIndex === index ? "opacity-40" : ""}`}
                 >
                   <button type="button" onClick={() => moveChord(index, index - 1)} disabled={index === 0} aria-label={`Mover ${chord} a la izquierda`} className="h-9 w-7 rounded-full text-ink-mute hover:bg-canvas-soft disabled:opacity-25">‹</button>
-                  <button type="button" onClick={() => setSelectedChord(chord)} className="px-1 font-mono font-semibold text-ink">{chord}</button>
+                  <button type="button" onClick={() => selectChord(chord)} className="px-1 font-mono font-semibold text-ink">{chord}</button>
                   <button type="button" onClick={() => moveChord(index, index + 1)} disabled={index === progression.length - 1} aria-label={`Mover ${chord} a la derecha`} className="h-9 w-7 rounded-full text-ink-mute hover:bg-canvas-soft disabled:opacity-25">›</button>
                   <button type="button" onClick={() => removeChordAt(index)} aria-label={`Quitar acorde ${chord}`} className="h-9 w-8 rounded-full text-ink-mute hover:bg-fn-dominant/10 hover:text-fn-dominant">×</button>
                 </li>
