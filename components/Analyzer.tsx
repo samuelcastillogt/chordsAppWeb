@@ -12,8 +12,9 @@ import { useAuth } from "@/lib/auth"
 import { downloadSvgAsPng } from "@/lib/export"
 import { functionColor, functionLabel, splitChordInput } from "@/lib/music"
 import { changedIndices } from "@/lib/progression"
+import { MAX_ANALYZED_CHORDS, condenseSong } from "@/lib/song"
 import { usePlayer } from "@/lib/usePlayer"
-import { AnalyzeResponse, Chord, Degree, ParsedChord, Progression, TablatureResponse } from "@/types"
+import { AnalyzeResponse, Chord, Degree, ParsedChord, Progression, StyleParseResponse, TablatureResponse } from "@/types"
 
 const EXAMPLES = [
   { label: "De música ligera", chords: "Bm G D A" },
@@ -32,6 +33,10 @@ const KEYS = [
 ]
 
 type Parsed = { recognized: ParsedChord[]; ignored: string[] }
+type SongFile = { name: string; song: StyleParseResponse; condensed: string[] }
+
+const MAX_FILE_BYTES = 200_000
+const MAX_SONG_CHARS = 40_000
 type AnalysisResult = { parsed: Parsed; response: AnalyzeResponse }
 
 /** Parse + analyze pipeline shared by the main analysis and the A/B variant. */
@@ -64,9 +69,13 @@ export default function Analyzer() {
   const initialKey = searchParams.get("key") ?? ""
   const [input, setInput] = useState(initialChords)
   const [keyOverride, setKeyOverride] = useState(initialKey)
-  const [submitted, setSubmitted] = useState<{ text: string; key: string } | null>(
+  const [submitted, setSubmitted] = useState<{ text: string; key: string; fromFile?: boolean } | null>(
     initialChords ? { text: initialChords, key: initialKey } : null,
   )
+  const [songFile, setSongFile] = useState<SongFile | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
+  const [readingFile, setReadingFile] = useState(false)
+  const [dragging, setDragging] = useState(false)
   const [variant, setVariant] = useState<string[] | null>(null)
   const curveRef = useRef<HTMLDivElement>(null)
   const player = usePlayer()
@@ -114,13 +123,44 @@ export default function Analyzer() {
     },
   })
 
-  function run(text = input, key = keyOverride) {
+  function run(text = input, key = keyOverride, fromFile = false) {
     setNotice(null)
     tablatureMutation.reset()
     saveMutation.reset()
     player.stop()
     setVariant(null)
-    setSubmitted({ text: text.trim(), key })
+    setSubmitted({ text: text.trim(), key, fromFile })
+  }
+
+  /** Reads a .txt (chords over lyrics, ChordPro or ASCII tab), condenses the song and analyses it. */
+  async function loadFile(file: File | undefined) {
+    if (!file) return
+    setFileError(null)
+    if (file.size > MAX_FILE_BYTES) {
+      setFileError("El archivo es muy grande. Sube una sola canción en texto plano (.txt).")
+      return
+    }
+    setReadingFile(true)
+    try {
+      const text = (await file.text()).slice(0, MAX_SONG_CHARS)
+      const title = file.name.replace(/\.[^.]+$/, "")
+      const song = await post<StyleParseResponse>("/api/v1/style/parse", { text, title, key: keyOverride || undefined })
+      if (song.chords.length < 2) {
+        setSongFile(null)
+        setFileError("No encontré acordes en el archivo. Deben ir en líneas propias (acordes sobre la letra), entre corchetes [Am] o en tablatura de 6 cuerdas.")
+        return
+      }
+      const condensed = condenseSong(song.sections.length ? song.sections : [{ name: "", chords: song.chords }])
+      setSongFile({ name: file.name, song, condensed })
+      setInput(condensed.join(" "))
+      if (!saveName) setSaveName(title)
+      // The whole song decides the key: it is more reliable than the condensed summary alone.
+      run(condensed.join(" "), keyOverride || song.key || "", !keyOverride)
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : "No se pudo leer el archivo")
+    } finally {
+      setReadingFile(false)
+    }
   }
 
   function onSubmit(event: FormEvent) {
@@ -195,8 +235,36 @@ export default function Analyzer() {
             ChordWeaver lee la armonía como un músico: detecta la tonalidad, nombra cada acorde por su grado, marca dónde está la tensión y te propone acordes para reemplazarlos o seguir componiendo.
           </p>
 
-          <form onSubmit={onSubmit} className="mt-8 rounded-xl border border-hairline-dark bg-primary-deep/60 p-4 shadow-2xl md:p-5">
-            <label htmlFor="chords-input" className="text-sm font-semibold text-on-dark-mute">Acordes (separados por espacios)</label>
+          <form
+            onSubmit={onSubmit}
+            onDragOver={event => {
+              event.preventDefault()
+              setDragging(true)
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={event => {
+              event.preventDefault()
+              setDragging(false)
+              loadFile(event.dataTransfer.files[0])
+            }}
+            className={`mt-8 rounded-xl border bg-primary-deep/60 p-4 shadow-2xl transition md:p-5 ${dragging ? "border-surface-violet-soft ring-2 ring-surface-violet-soft/60" : "border-hairline-dark"}`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label htmlFor="chords-input" className="text-sm font-semibold text-on-dark-mute">Acordes (separados por espacios)</label>
+              <label className="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-md border border-hairline-dark px-3 text-sm font-semibold text-on-primary transition hover:border-surface-violet-soft focus-within:border-surface-violet-soft">
+                {readingFile ? "Leyendo archivo..." : "Subir .txt con letra y acordes o tablatura"}
+                <input
+                  type="file"
+                  accept=".txt,.pro,.chopro,.cho,text/plain"
+                  className="sr-only"
+                  disabled={readingFile}
+                  onChange={event => {
+                    loadFile(event.target.files?.[0])
+                    event.target.value = ""
+                  }}
+                />
+              </label>
+            </div>
             <div className="mt-2 flex flex-col gap-3 md:flex-row">
               <input
                 id="chords-input"
@@ -233,7 +301,9 @@ export default function Analyzer() {
                 </button>
               ))}
             </div>
-            <p className="mt-3 text-xs text-on-dark-mute/80">Entiende cifrado americano y latino (DO, SOLm), bemoles, séptimas, sus, add9 y acordes con bajo (D/F#).</p>
+            <p className="mt-3 text-xs text-on-dark-mute/80">Entiende cifrado americano y latino (DO, SOLm), bemoles, séptimas, sus, add9 y acordes con bajo (D/F#). También puedes arrastrar aquí un .txt con la canción.</p>
+            {fileError ? <p role="alert" className="mt-3 rounded-md border border-fn-dominant/40 bg-fn-dominant/15 px-3 py-2 text-sm text-on-primary">{fileError}</p> : null}
+            {songFile ? <SongFileCard file={songFile} onClear={() => setSongFile(null)} /> : null}
           </form>
         </div>
       </section>
@@ -260,7 +330,9 @@ export default function Analyzer() {
                 <p className="mt-2 text-sm text-ink-mute">
                   {analysis.key.detected
                     ? `Detectada automáticamente · confianza ${Math.round(analysis.key.confidence * 100)}%. ¿No es esa? Elige otra arriba.`
-                    : "Elegida por ti."}
+                    : submitted?.fromFile
+                      ? "Detectada en la canción completa del archivo. ¿No es esa? Elige otra arriba."
+                      : "Elegida por ti."}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -532,6 +604,38 @@ function HowItWorks() {
           <p className="mt-2 text-sm leading-6 text-ink-mute">{step.body}</p>
         </article>
       ))}
+    </div>
+  )
+}
+
+function SongFileCard({ file, onClear }: { file: SongFile; onClear: () => void }) {
+  const { song, condensed } = file
+  const condensedNote =
+    condensed.length < song.chords.length
+      ? `Para el análisis la resumí en ${condensed.length} acordes, sin secciones ni vueltas repetidas${condensed.length === MAX_ANALYZED_CHORDS ? ` (máximo ${MAX_ANALYZED_CHORDS})` : ""}.`
+      : null
+  return (
+    <div className="mt-4 rounded-lg border border-hairline-dark bg-primary/60 p-3 text-sm text-on-dark-mute">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <p>
+          <strong className="text-on-primary">{file.name}</strong> · {song.chords.length} acordes leídos
+          {song.tabChords ? ` (${song.tabChords} de tablatura)` : ""}
+          {song.keyLabel ? <> · canción en <strong className="text-on-primary">{song.keyLabel}</strong></> : null}
+        </p>
+        <button type="button" onClick={onClear} aria-label="Quitar el resumen del archivo" className="h-7 w-7 rounded-full text-base hover:bg-white/10 hover:text-on-primary">×</button>
+      </div>
+      {condensedNote ? <p className="mt-1 text-xs">{condensedNote}</p> : null}
+      {song.sections.length ? (
+        <details className="mt-2 text-xs">
+          <summary className="cursor-pointer font-semibold text-on-primary">Ver estructura ({song.sections.length} secciones)</summary>
+          <ul className="mt-1 space-y-0.5 font-mono">
+            {song.sections.map((section, index) => (
+              <li key={index}><span className="text-on-dark-mute/70">{section.name || "—"}:</span> <span className="text-on-primary">{section.chords.join(" ")}</span></li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {song.unknown.length ? <p className="mt-1 text-xs">Ignorados: <span className="font-mono">{song.unknown.join(", ")}</span></p> : null}
     </div>
   )
 }
