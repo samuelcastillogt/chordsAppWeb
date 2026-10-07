@@ -15,7 +15,7 @@ The frontend is a Next.js 14 App Router application that turns the ChordWeaver A
 
 ## Data Sources
 
-The API base URL is resolved in `lib/api.ts`:
+The API base URL is resolved in `src/lib/api.ts`:
 
 ```txt
 NEXT_PUBLIC_API_URL || http://localhost:8000
@@ -30,7 +30,7 @@ The explorer uses these backend endpoints:
 - `GET /api/v1/chords/{id}/connections`: loads recommended next chords for the selected tonality.
 - `POST /api/v1/analyze`: key detection, roman numerals, functions, substitutions and tension curve.
 - `POST /api/v1/tablature`: generates deterministic guitar tablature for the current progression.
-- `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `GET /api/v1/auth/me`: accounts (JWT Bearer).
+- `GET/PATCH/DELETE /api/v1/auth/me`: the signed-in user. Sign-up and sign-in happen in Firebase Authentication; every request carries the Firebase ID token as `Authorization: Bearer` (see `src/lib/auth/`).
 - `GET /api/v1/progressions`: lists the signed-in user's progressions.
 - `POST /api/v1/progressions`: creates a progression (requires login).
 - `GET /api/v1/progressions/{id}`: loads an owned or public (shared) progression.
@@ -39,18 +39,18 @@ The explorer uses these backend endpoints:
 
 ## Analyzer (home page)
 
-`components/Analyzer.tsx` is the entry point of the product. The submitted text is split with `splitChordInput`, normalised with `/chords/parse` (unknown tokens such as `x2` or `N.C.` are listed as ignored) and analysed with `/analyze`. The whole pipeline is a React Query query keyed by the submitted text and key, so deep links (`?chords=`), example buttons and substitution clicks all reuse the same code path and cache. Each degree card can replace its chord with a suggested substitution, which rewrites the input and re-runs the analysis.
+`src/components/analyzer/Analyzer.tsx` is the entry point of the product. The submitted text is split with `splitChordInput`, normalised with `/chords/parse` (unknown tokens such as `x2` or `N.C.` are listed as ignored) and analysed with `/analyze`. The whole pipeline is a React Query query keyed by the submitted text and key, so deep links (`?chords=`), example buttons and substitution clicks all reuse the same code path and cache. Each degree card can replace its chord with a suggested substitution, which rewrites the input and re-runs the analysis.
 
 ## Suggestions, Playback And Export
 
-- `lib/suggestions.ts` turns `/connections` (requested with `max_results=60`) into the sidebar list. Intention modes map to engine categories (`safe` = natural, `interesting` = media, `bold` = tensa + extrema). Style presets re-weight the seven raw criteria from `breakdown` (pop favours tonal fit, jazz-lite dominant chains and voice leading, cinematic parallel/relative moves and bridge notes); `balanced` keeps the engine score. The short explanation is the detail text of the two criteria with the highest weighted contribution. Everything is client-side, so no API change was needed.
-- `lib/audio.ts → playSequence` schedules one chord at a time through a master gain node, which allows tempo (2 beats per chord), loop, volume and an immediate stop. `lib/usePlayer.ts` keeps one playback per screen and exposes the sounding index used to highlight chips and degree cards. Suggestion previews play `source → target` with the same player.
+- `src/lib/music/suggestions.ts` turns `/connections` (requested with `max_results=60`) into the sidebar list. Intention modes map to engine categories (`safe` = natural, `interesting` = media, `bold` = tensa + extrema). Style presets re-weight the seven raw criteria from `breakdown` (pop favours tonal fit, jazz-lite dominant chains and voice leading, cinematic parallel/relative moves and bridge notes); `balanced` keeps the engine score. The short explanation is the detail text of the two criteria with the highest weighted contribution. Everything is client-side, so no API change was needed.
+- `src/lib/audio/synth.ts → playSequence` schedules one chord at a time through a master gain node, which allows tempo (2 beats per chord), loop, volume and an immediate stop. `src/lib/audio/usePlayer.ts` keeps one playback per screen and exposes the sounding index used to highlight chips and degree cards. Suggestion previews play `source → target` with the same player.
 - The analyzer's substitutions no longer rewrite the input: they build variant B on top of A. B is analysed in A's key with the same React Query pipeline (`analyzeText`), and `CompareAB` shows both, the average-fluency delta, the changed degrees, and actions to keep B, save A and B (two progressions, the second suffixed "(variante)") or discard.
-- `lib/export.ts` serialises the on-screen SVG (explicit size, paper background, CSS font variables replaced by real font stacks) to SVG or a 2x PNG through a canvas. `lib/midi.ts` writes a format-0 MIDI file (480 PPQ, piano, one block chord per two beats at the current tempo).
+- `src/lib/export.ts` serialises the on-screen SVG (explicit size, paper background, CSS font variables replaced by real font stacks) to SVG or a 2x PNG through a canvas. `src/lib/audio/midi.ts` writes a format-0 MIDI file (480 PPQ, piano, one block chord per two beats at the current tempo).
 
 ## Screen Architecture
 
-`app/explorer/page.tsx` owns the main application state:
+`src/app/explorer/page.tsx` owns the main application state:
 
 - `selectedChord`: current graph/source chord.
 - `tonality`: tonal context passed to the connection and analysis endpoints.
@@ -70,9 +70,9 @@ TanStack Query separates reads from writes. Reads are keyed by chord, tonality, 
 
 Two views share the map card in the explorer.
 
-`components/ChordGraph.tsx` (options map, D3): the selected chord in the centre and its ranked connections placed by circle-of-fifths distance, links coloured by category and weighted by score.
+`src/components/explorer/ChordGraph.tsx` (options map, D3): the selected chord in the centre and its ranked connections placed by circle-of-fifths distance, links coloured by category and weighted by score.
 
-`components/HarmonicMandala.tsx` (harmonic mandala, declarative SVG) takes the idea of Brian Callipari's *Armonía Ilustrada* (chords connected by arrows that show where you can go, including paths to other tonal regions) and makes it a live, key-aware map. Geometry and theory live in `lib/mandala.ts`:
+`src/components/explorer/HarmonicMandala.tsx` (harmonic mandala, declarative SVG) takes the idea of Brian Callipari's *Armonía Ilustrada* (chords connected by arrows that show where you can go, including paths to other tonal regions) and makes it a live, key-aware map. Geometry and theory live in `src/lib/music/mandala.ts`:
 
 - **Rings by family, aligned spokes.** Outside in: dominant 7ths, majors, minors, diminished, augmented (off by default). Minors sit under their relative major, diminished chords under the major key where they are vii°, and each dominant 7th orbits right outside the chord it resolves to (G7 above C). A key therefore occupies one petal of three spokes: IV · I · V on top, ii · vi · iii under them and vii° in the middle (VI · III · VII / iv · i · v / ii° in minor).
 - **Rotates with the key.** The tonic petal is always on top. The parallel key's petal (three spokes away) is tinted violet: that's where borrowed chords come from, so changing tonal region is literally moving to a neighbouring petal.
@@ -88,7 +88,7 @@ Nodes in both views are keyboard accessible (`tabindex`, `role="button"`, Enter/
 
 ## Music Helpers
 
-`lib/music.ts` centralizes reusable music logic:
+`src/lib/music/theory.ts` centralizes reusable music logic:
 
 - `noteToFrequency`: maps note names to oscillator frequencies.
 - `categoryColor`: maps connection categories to UI colors.
@@ -148,13 +148,13 @@ The layout follows the product design file:
 
 ## Known Limitations
 
-- Saved progressions are persisted per user in the API database. On Vercel they only survive restarts when `DATABASE_URL` points to PostgreSQL; without `SECRET_KEY` the server disables accounts and the UI hides saving.
+- Saved progressions are stored by the API in Firestore (the browser never talks to Firestore directly). Without `FIREBASE_PROJECT_ID` and `FIREBASE_SERVICE_ACCOUNT` (API) or the `NEXT_PUBLIC_FIREBASE_*` variables (web) accounts are disabled and the UI hides saving.
 - Playback uses simple synthesized chords, not sampled instruments or inversions. `tone` is still a dependency but unused.
 - Shown/applied suggestions are not tracked yet: the PRD's recommendation history needs an API endpoint and a privacy decision.
 - Variants are saved as two separate progressions; the API has no variant relation.
 - There is no dark mode or onboarding. The mandala uses sharps for every root because the catalog does (A#, not Bb).
 - The SVG graph is redrawn on relevant data changes instead of using fine-grained D3 updates. This is acceptable for the current catalog size.
-- No browser E2E suite exists yet. Automated coverage is helper-level (`lib/music.test.ts`, `lib/suggestions.test.ts`, `lib/progression.test.ts`: ranking, reordering, A/B diff, MIDI bytes, file names) plus the Next production build; the UI flows were verified manually against a local API.
+- No browser E2E suite exists yet. Automated coverage is helper-level (`src/lib/**/*.test.ts`: music theory, mandala, suggestions, progressions, song condensing, trail, band style, auth error messages) plus the Next production build; the UI flows were verified manually against a local API.
 
 ## Verification
 

@@ -11,18 +11,32 @@ Producción: <https://samuelcastillogt.github.io/chordsAppWeb/> (GitHub Pages, e
 
 ## Desarrollo
 
+Requisitos: Node 20+ (`.nvmrc`) y la API corriendo (repo del backend).
+
 ```bash
 npm install
-cp .env.example .env.local   # NEXT_PUBLIC_API_URL=http://localhost:8000
-npm run dev
+cp .env.example .env.local   # completa las variables (ver abajo)
+npm run dev                  # http://localhost:3000
 ```
 
-Abre `http://localhost:3000`. Necesitas la API corriendo (ver el repo del backend).
+### Variables de entorno
 
-| Variable | Uso |
-| --- | --- |
-| `NEXT_PUBLIC_API_URL` | URL de la API. Por defecto la de producción. |
-| `NEXT_PUBLIC_BASE_PATH` | Prefijo de la app para construir enlaces absolutos (los fija el workflow de GitHub Pages). |
+Todas son públicas (`NEXT_PUBLIC_*`, se incrustan en el bundle al compilar) y están documentadas en [`.env.example`](.env.example). En el código se leen solo desde [`src/lib/env.ts`](src/lib/env.ts).
+
+| Variable | Obligatoria | Uso |
+| --- | --- | --- |
+| `NEXT_PUBLIC_API_URL` | no | URL de la API. Vacía: la de producción. |
+| `NEXT_PUBLIC_BASE_PATH` | no | Prefijo de la app para enlaces absolutos (lo fija el workflow de GitHub Pages). |
+| `NEXT_PUBLIC_FIREBASE_API_KEY` | para cuentas | Configuración web de Firebase. |
+| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | para cuentas | 〃 |
+| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | para cuentas | 〃 (el mismo que `FIREBASE_PROJECT_ID` en la API). |
+| `NEXT_PUBLIC_FIREBASE_APP_ID` | para cuentas | 〃 |
+| `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`, `_MESSAGING_SENDER_ID`, `_MEASUREMENT_ID` | no | Resto de la configuración web. |
+| `NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST` | no | `127.0.0.1:9099` para usar el emulador local de Firebase Auth. |
+
+Sin las cuatro variables obligatorias de Firebase la app funciona igual, pero sin cuentas (se ocultan las acciones de guardar y compartir).
+
+**En producción (GitHub Pages)** las variables se leen de *Settings → Secrets and variables → Actions → Variables* del repositorio (son públicas, por eso van como *variables* y no como *secrets*).
 
 ## Enlaces profundos
 
@@ -34,30 +48,51 @@ Abre `http://localhost:3000`. Necesitas la API corriendo (ver el repo del backen
 | `/explorer?chords=Bm,G,D,A&key=Bm` | Abre el explorador con esa progresión. |
 | `/explorer?p=<id>` | Abre una progresión compartida (pública) o propia. |
 
-## Cuentas
+## Cuentas (Firebase Authentication)
 
-`lib/auth.tsx` guarda el JWT en `localStorage`, consulta `/health` para saber si las cuentas están activas en el servidor y expone `useAuth()` (`user`, `login`, `register`, `logout`, `openDialog`). Analizar y explorar no requieren cuenta; guardar y compartir sí. Si el servidor no tiene `SECRET_KEY` configurada, la interfaz oculta las acciones de cuenta.
+El registro y el inicio de sesión ocurren en Firebase: email y contraseña (con verificación de correo y recuperación de contraseña) o Google. [`src/lib/auth/AuthProvider.tsx`](src/lib/auth/AuthProvider.tsx) escucha la sesión de Firebase, registra en el cliente de la API cómo obtener el **ID token** (que Firebase renueva solo) y pide a la API el usuario (`GET /api/v1/auth/me`, que lo crea la primera vez). `useAuth()` expone `user`, `signedIn`, `signIn`, `signUp`, `signInWithGoogle`, `resetPassword`, `logout` y el diálogo de acceso.
+
+Si alguien tenía cuenta antes de Firebase, al entrar con el mismo email la API la vincula **cuando el correo está verificado**. Mientras tanto, el diálogo muestra "Verifica tu correo" con las opciones de reenviar el correo y de reintentar.
+
+Configurar Firebase:
+
+1. Crea un proyecto en <https://console.firebase.google.com> y registra una **app web**: copia su configuración a las variables `NEXT_PUBLIC_FIREBASE_*`.
+2. **Authentication → Sign-in method**: activa *Correo electrónico/contraseña* y *Google*.
+3. **Authentication → Settings → Authorized domains**: agrega `localhost` y `samuelcastillogt.github.io`.
+4. En la API define `FIREBASE_PROJECT_ID` con el mismo Project ID.
 
 ## Estructura
 
-- `app/page.tsx` + `components/Analyzer.tsx`: analizador (página de inicio).
-- `app/explorer/page.tsx`: explorador armónico, editor de progresión, tablatura y biblioteca lateral.
-- `app/progressions/page.tsx`: biblioteca, compartir y eliminar.
-- `app/fretboard`, `app/piano`: exploradores por instrumento.
-- `components/SiteHeader.tsx`, `AuthDialog.tsx`, `ConfirmDialog.tsx`, `TensionCurve.tsx`, `ChordGraph.tsx`, `HarmonicMandala.tsx`, `SuggestionPanel.tsx`, `PlayerControls.tsx`, `GuitarFretboard.tsx`, `InstrumentRecommendations.tsx`, `ChordSelector.tsx`.
-- `lib/api.ts`: cliente tipado (token, errores legibles, `appUrl`).
-- `lib/auth.tsx`, `lib/audio.ts` (Web Audio: secuencias con tempo/loop/volumen/stop) + `lib/usePlayer.ts`, `lib/music.ts` (frecuencias, intervalos, colores por función, `splitChordInput`).
-- `lib/mandala.ts` (geometría y grados del mandala), `lib/suggestions.ts` (modos, estilos, explicación y desglose), `lib/progression.ts` (reordenar, diferencias A/B), `lib/midi.ts` (archivo MIDI), `lib/export.ts` (SVG/PNG y descargas).
-- `types.ts`: contratos de la API.
+```
+src/
+├── app/                      # Rutas (App Router): /, /explorer, /estilo, /fretboard, /piano, /progressions
+├── components/
+│   ├── analyzer/             # Analyzer, TensionCurve
+│   ├── auth/                 # AuthDialog
+│   ├── explorer/             # HarmonicMandala, ChordGraph, SuggestionPanel, StylePicker, ChordSelector
+│   ├── instruments/          # GuitarFretboard, InstrumentRecommendations
+│   ├── layout/               # SiteHeader
+│   └── ui/                   # ConfirmDialog, PlayerControls
+├── lib/
+│   ├── api.ts                # Cliente tipado: token de Firebase, reintento ante 401, errores legibles
+│   ├── env.ts                # Única lectura de variables de entorno
+│   ├── export.ts             # SVG/PNG y descargas
+│   ├── auth/                 # AuthProvider, inicialización de Firebase, mensajes de error
+│   ├── audio/                # Síntesis Web Audio, usePlayer, MIDI
+│   └── music/                # Teoría, mandala, sugerencias, progresión, canción, recorrido, estilo (+ tests)
+└── types/                    # Contratos de la API
+```
 
 Más detalle en `docs/technical-overview.md`; el sistema visual está en `DESIGN.md`.
 
 ## Calidad
 
 ```bash
-npx tsc --noEmit
-npm test -- --run
-npm run build
+npm run check        # typecheck + ESLint + Prettier + tests (lo mismo que la CI)
+npm run format       # formatea con Prettier
+npm run build        # build de producción
 ```
 
-El workflow `.github/workflows/nextjs.yml` corre los tests y publica en GitHub Pages en cada push a `main`.
+- **CI** (`.github/workflows/ci.yml`): en cada PR y push a otras ramas ejecuta typecheck, lint, formato, tests y build.
+- **Despliegue** (`.github/workflows/nextjs.yml`): cada push a `main` verifica, compila como export estático y publica en GitHub Pages.
+- **Docker**: `docker build --build-arg NEXT_PUBLIC_API_URL=... --build-arg NEXT_PUBLIC_FIREBASE_API_KEY=... -t chordweaver-web .` genera el servidor standalone de Next.js.

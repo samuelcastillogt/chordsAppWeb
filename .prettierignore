@@ -1,0 +1,7 @@
+.next
+out
+node_modules
+.npm-cache
+package-lock.json
+*.md
+.claude

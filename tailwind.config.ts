@@ -2,7 +2,7 @@ import type { Config } from "tailwindcss"
 
 // Token names are kept stable across redesigns; DESIGN.md documents their role.
 const config: Config = {
-  content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}"],
+  content: ["./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {

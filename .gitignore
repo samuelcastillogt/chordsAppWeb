@@ -1,9 +1,17 @@
+# Dependencies and caches
 node_modules/
+.npm-cache/
+
+# Build output
 .next/
 out/
 dist/
-.env.local
-.npm-cache/
-.DS_Store
-*.log
 *.tsbuildinfo
+
+# Local environment (keep .env.example committed)
+.env
+.env*.local
+
+# Logs and OS files
+*.log
+.DS_Store

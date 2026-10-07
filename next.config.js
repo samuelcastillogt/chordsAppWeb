@@ -1,10 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Docker image. The GitHub Pages workflow switches this to a static export at build time.
   output: "standalone",
-  env: {
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || "https://chords-api-python.vercel.app",
-    NEXT_PUBLIC_BASE_PATH: process.env.NEXT_PUBLIC_BASE_PATH || "",
-  },
+  reactStrictMode: true,
+  poweredByHeader: false,
 }
 
 module.exports = nextConfig

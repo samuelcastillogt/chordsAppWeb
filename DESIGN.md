@@ -34,7 +34,7 @@ Los nombres de token se mantienen estables para no reescribir componentes; su pa
 | `fn-borrowed` | `#7b5cd6` | Acorde prestado del modo paralelo. |
 | `fn-chromatic` | `#6b7280` | Fuera de la tonalidad. |
 
-`lib/music.ts → functionColor()` (web) y `src/lib/music.ts` (móvil) son la única fuente de estos valores en código. Las categorías de conexión del motor (natural / media / tensa / extrema) conservan verde / amarillo / naranja / rojo.
+`src/lib/music/theory.ts → functionColor()` (web) y `src/lib/music.ts` (móvil) son la única fuente de estos valores en código. Las categorías de conexión del motor (natural / media / tensa / extrema) conservan verde / amarillo / naranja / rojo.
 
 ## Tipografía
 
@@ -44,7 +44,7 @@ Los nombres de token se mantienen estables para no reescribir componentes; su pa
 | **Inter** (`font-sans`) | Interfaz y texto. |
 | **JetBrains Mono** (`font-mono`) | Cifrados de acordes y tablaturas: la alineación importa. |
 
-Cargadas con `next/font/google` en `app/layout.tsx` (sin peticiones a terceros en tiempo de ejecución).
+Cargadas con `next/font/google` en `src/app/layout.tsx` (sin peticiones a terceros en tiempo de ejecución).
 
 Escala: hero 40→68 px, títulos de sección 28–44 px, cuerpo 16 px, etiquetas 12 px en mayúsculas con tracking 0,2 em.
 

@@ -1,0 +1,10 @@
+{
+  "root": true,
+  "extends": ["next/core-web-vitals", "prettier"],
+  "rules": {
+    "no-console": ["warn", { "allow": ["warn", "error"] }],
+    "prefer-const": "error",
+    "eqeqeq": ["error", "smart"]
+  },
+  "ignorePatterns": [".next/", "out/", "node_modules/", "next-env.d.ts"]
+}
