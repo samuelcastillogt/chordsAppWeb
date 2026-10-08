@@ -36,7 +36,7 @@ Todas son públicas (`NEXT_PUBLIC_*`, se incrustan en el bundle al compilar) y e
 
 Sin las cuatro variables obligatorias de Firebase la app funciona igual, pero sin cuentas (se ocultan las acciones de guardar y compartir).
 
-**En producción (GitHub Pages)** las variables se leen de *Settings → Secrets and variables → Actions → Variables* del repositorio (son públicas, por eso van como *variables* y no como *secrets*).
+**En producción (GitHub Pages)** las variables se leen de *Settings → Environments → github-pages → Environment variables* (son públicas, por eso van como *variables* y no como *secrets*).
 
 ## Enlaces profundos
 
