@@ -21,6 +21,12 @@ export const env = {
     messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || undefined,
     measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || undefined,
   },
+  /** Public URL of the deployed site (canonical links, sitemap, social previews). */
+  siteUrl: (process.env.NEXT_PUBLIC_SITE_URL || "https://samuelcastillogt.github.io/chordsAppWeb").replace(/\/$/, ""),
+  /** Address for privacy, terms and account requests; empty shows the GitHub issues link instead. */
+  contactEmail: process.env.NEXT_PUBLIC_CONTACT_EMAIL ?? "",
+  /** Content of Search Console's HTML-tag verification (google-site-verification). */
+  googleSiteVerification: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION ?? "",
   /** host:port of the Firebase Auth emulator (e.g. "127.0.0.1:9099"); empty in production. */
   firebaseAuthEmulatorHost: process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST ?? "",
 } as const

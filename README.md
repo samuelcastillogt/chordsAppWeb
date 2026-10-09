@@ -31,7 +31,11 @@ Todas son públicas (`NEXT_PUBLIC_*`, se incrustan en el bundle al compilar) y e
 | `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | para cuentas | 〃 |
 | `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | para cuentas | 〃 (el mismo que `FIREBASE_PROJECT_ID` en la API). |
 | `NEXT_PUBLIC_FIREBASE_APP_ID` | para cuentas | 〃 |
-| `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`, `_MESSAGING_SENDER_ID`, `_MEASUREMENT_ID` | no | Resto de la configuración web. |
+| `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`, `_MESSAGING_SENDER_ID` | no | Resto de la configuración web. |
+| `NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID` | para analítica | Flujo de Google Analytics 4 de la app web de Firebase (`G-…`). Activa los eventos de producto. |
+| `NEXT_PUBLIC_SITE_URL` | no | URL pública del sitio (canónicas, `sitemap.xml`, vista previa al compartir). Vacía: la de GitHub Pages. |
+| `NEXT_PUBLIC_CONTACT_EMAIL` | recomendada | Correo de contacto de las páginas legales. Vacía: enlaza a los issues de GitHub. |
+| `NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION` | no | Valor `content` de la etiqueta HTML de verificación de Search Console. |
 | `NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST` | no | `127.0.0.1:9099` para usar el emulador local de Firebase Auth. |
 
 Sin las cuatro variables obligatorias de Firebase la app funciona igual, pero sin cuentas (se ocultan las acciones de guardar y compartir).
@@ -47,6 +51,20 @@ Sin las cuatro variables obligatorias de Firebase la app funciona igual, pero si
 | `/?...&utm_content=song:soda-stereo/de-musica-ligera` | Muestra “Vienes de *De musica ligera*” y guarda el origen en la progresión. Lo usa el cancionero Universo Soda/Cerati. |
 | `/explorer?chords=Bm,G,D,A&key=Bm` | Abre el explorador con esa progresión. |
 | `/explorer?p=<id>` | Abre una progresión compartida (pública) o propia. |
+
+Las rutas se exportan con barra final (`/explorer/`, `trailingSlash: true`), así GitHub Pages sirve `/explorer` y `/explorer/` sin 404. Los enlaces para compartir apuntan a `https://<API>/p/<id>`: esa página de la API tiene la vista previa (nombre y acordes) que leen WhatsApp y las redes, y redirige al explorador.
+
+## Planes, precios y suscripción
+
+- `/precios` lee los planes de `GET /api/v1/plans` (Gratis, Pro y Vitalicio fundador; precio para Latinoamérica detectado por la zona horaria).
+- El checkout (`POST /api/v1/billing/checkout`) está **simulado** mientras `provider` sea `mock`: activa el plan sin cobrar y la web lo dice en cada paso. Cuando la API tenga un procesador real, la respuesta traerá `checkoutUrl` y [`CheckoutDialog`](src/components/billing/CheckoutDialog.tsx) redirige allí sin otros cambios.
+- El plan Gratis guarda 5 progresiones; al llegar al límite la API responde 402 y el analizador y el explorador muestran `PlanLimitNotice` con el enlace a precios.
+- `/cuenta` muestra el plan, el uso, la cancelación y **eliminar la cuenta** (borra los datos en la API y la cuenta de Firebase; si la sesión es antigua pide entrar de nuevo antes de borrar nada).
+- Páginas legales: `/privacidad`, `/terminos` y `/eliminar-cuenta` (la URL que pide Google Play).
+
+## Analítica
+
+[`src/lib/analytics.ts`](src/lib/analytics.ts) envía eventos a Google Analytics 4 mediante Firebase Analytics: `analyze`, `save`, `share`, `sign_up`, `login`, `pro_click`, `begin_checkout`, `purchase` (solo pagos reales), `plan_limit_reached`, `cancel_subscription` y `delete_account`. Sin `NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID` no se envía nada.
 
 ## Cuentas (Firebase Authentication)
 

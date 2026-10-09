@@ -7,13 +7,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import ChordGraph from "@/components/explorer/ChordGraph"
 import ChordSelector from "@/components/explorer/ChordSelector"
 import ConfirmDialog from "@/components/ui/ConfirmDialog"
+import PlanLimitNotice from "@/components/billing/PlanLimitNotice"
+import ShareNotice from "@/components/ui/ShareNotice"
 import GuitarFretboard from "@/components/instruments/GuitarFretboard"
 import HarmonicMandala from "@/components/explorer/HarmonicMandala"
 import PlayerControls from "@/components/ui/PlayerControls"
 import StylePicker from "@/components/explorer/StylePicker"
 import SuggestionPanel from "@/components/explorer/SuggestionPanel"
 import TensionCurve from "@/components/analyzer/TensionCurve"
-import { appUrl, del, get, getApiBaseUrl, post, put } from "@/lib/api"
+import { track } from "@/lib/analytics"
+import { del, get, getApiBaseUrl, post, put } from "@/lib/api"
+import { isPlanLimitError } from "@/lib/billing"
+import { shareUrl } from "@/lib/share"
 import { playArpeggio } from "@/lib/audio/synth"
 import { useAuth } from "@/lib/auth/AuthProvider"
 import { downloadBlob, downloadSvg, downloadSvgAsPng, slugify } from "@/lib/export"
@@ -82,6 +87,8 @@ function Explorer() {
   const [selectedProgressionId, setSelectedProgressionId] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [shared, setShared] = useState<{ progression: Progression; copied: boolean } | null>(null)
+  const [planLimit, setPlanLimit] = useState<string | null>(null)
   const [isTablatureModalOpen, setIsTablatureModalOpen] = useState(false)
   const [suggestionMode, setSuggestionMode] = useState<SuggestionMode>("all")
   const [stylePreset, setStylePreset] = useState<StylePreset>("balanced")
@@ -185,19 +192,22 @@ function Explorer() {
 
   const analyzeMutation = useMutation({
     mutationFn: () => post<AnalyzeResponse>("/api/v1/analyze", { chords: progression, tonality }),
+    onSuccess: () => track("analyze", { placement: "explorer", chords: progression.length }),
     onError: error => setErrorMessage(error instanceof Error ? error.message : "No se pudo analizar la progresión"),
   })
 
   const shareMutation = useMutation({
     mutationFn: (saved: Progression) => put<Progression>(`/api/v1/progressions/${saved.id}`, { isPublic: true }),
     onSuccess: async saved => {
-      const link = appUrl(`/explorer?p=${saved.id}`)
+      track("share", { method: "link", placement: "explorer" })
+      let copied = true
       try {
-        await navigator.clipboard.writeText(link)
-        setMessage(`Enlace copiado: ${link}`)
+        await navigator.clipboard.writeText(shareUrl(saved))
       } catch {
-        setMessage(`Comparte este enlace: ${link}`)
+        copied = false
       }
+      setMessage(null)
+      setShared({ progression: saved, copied })
       queryClient.invalidateQueries({ queryKey: ["progressions"] })
     },
     onError: error => setErrorMessage(error instanceof Error ? error.message : "No se pudo compartir"),
@@ -209,12 +219,20 @@ function Explorer() {
       return selectedProgressionId ? put<Progression>(`/api/v1/progressions/${selectedProgressionId}`, body) : post<Progression>("/api/v1/progressions", body)
     },
     onSuccess: saved => {
+      if (!selectedProgressionId) track("save", { placement: "explorer", chords: saved.chords.length })
       setSelectedProgressionId(saved.id)
       setMessage(`Progresión guardada: ${saved.name}`)
       setErrorMessage(null)
+      setPlanLimit(null)
       queryClient.invalidateQueries({ queryKey: ["progressions"] })
     },
-    onError: error => setErrorMessage(error instanceof Error ? error.message : "No se pudo guardar la progresión"),
+    onError: error => {
+      if (isPlanLimitError(error)) {
+        setPlanLimit((error as Error).message)
+        return
+      }
+      setErrorMessage(error instanceof Error ? error.message : "No se pudo guardar la progresión")
+    },
   })
 
   const tablatureMutation = useMutation({
@@ -712,6 +730,12 @@ function Explorer() {
               ))}
             </ol>
             {message && <p className="mt-4 text-sm text-surface-teal-mid">{message}</p>}
+            {shared ? <ShareNotice progression={shared.progression} copied={shared.copied} /> : null}
+            {planLimit ? (
+              <div className="mt-4">
+                <PlanLimitNotice message={planLimit} placement="explorer" />
+              </div>
+            ) : null}
             {errorMessage && <p className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{errorMessage}</p>}
           </div>
 

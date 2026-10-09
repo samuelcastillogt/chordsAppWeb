@@ -13,6 +13,7 @@ const LINKS = [
   { href: "/fretboard", label: "Mástil" },
   { href: "/piano", label: "Piano" },
   { href: "/progressions", label: "Mis progresiones" },
+  { href: "/precios", label: "Precios" },
 ]
 
 export default function SiteHeader() {
@@ -47,12 +48,19 @@ export default function SiteHeader() {
         <div className="flex items-center gap-2 text-sm">
           {!ready ? null : user ? (
             <>
-              {user.photoUrl ? (
-                // A plain <img>: the static GitHub Pages export has no image optimizer for next/image.
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={user.photoUrl} alt="" referrerPolicy="no-referrer" className="h-8 w-8 rounded-full border border-hairline-dark" />
-              ) : null}
-              <span className="hidden text-on-dark-mute md:inline">{user.displayName || user.email}</span>
+              <Link href="/cuenta" aria-label="Mi cuenta" className="flex min-h-10 items-center gap-2 rounded-md px-1 hover:bg-white/10">
+                {user.photoUrl ? (
+                  // A plain <img>: the static GitHub Pages export has no image optimizer for next/image.
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={user.photoUrl} alt="" referrerPolicy="no-referrer" className="h-8 w-8 rounded-full border border-hairline-dark" />
+                ) : null}
+                <span className="hidden text-on-dark-mute md:inline">{user.displayName || user.email}</span>
+                {user.plan !== "free" ? (
+                  <span className="rounded-full bg-surface-violet-soft px-2 py-0.5 text-xs font-bold text-primary">
+                    {user.plan === "lifetime" ? "Fundador" : "Pro"}
+                  </span>
+                ) : null}
+              </Link>
               <button
                 type="button"
                 onClick={() => void logout()}

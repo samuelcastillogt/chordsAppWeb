@@ -5,14 +5,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 
 import ConfirmDialog from "@/components/ui/ConfirmDialog"
-import { appUrl, del, get, put } from "@/lib/api"
+import ShareNotice from "@/components/ui/ShareNotice"
+import { track } from "@/lib/analytics"
+import { del, get, put } from "@/lib/api"
 import { useAuth } from "@/lib/auth/AuthProvider"
+import { shareUrl } from "@/lib/share"
 import { Progression } from "@/types"
 
 export default function ProgressionsPage() {
   const { user, ready, accountsEnabled, openDialog } = useAuth()
   const queryClient = useQueryClient()
   const [message, setMessage] = useState<string | null>(null)
+  const [shared, setShared] = useState<{ progression: Progression; copied: boolean } | null>(null)
   const [pendingDelete, setPendingDelete] = useState<Progression | null>(null)
 
   const { data, isLoading, error } = useQuery<{ progressions: Progression[]; total: number }>({
@@ -26,16 +30,19 @@ export default function ProgressionsPage() {
     onSuccess: async saved => {
       queryClient.invalidateQueries({ queryKey: ["progressions"] })
       if (!saved.isPublic) {
+        setShared(null)
         setMessage(`"${saved.name}" vuelve a ser privada.`)
         return
       }
-      const link = appUrl(`/explorer?p=${saved.id}`)
+      setMessage(null)
+      track("share", { method: "link", placement: "library" })
+      let copied = true
       try {
-        await navigator.clipboard.writeText(link)
-        setMessage(`Enlace copiado: ${link}`)
+        await navigator.clipboard.writeText(shareUrl(saved))
       } catch {
-        setMessage(`Comparte este enlace: ${link}`)
+        copied = false
       }
+      setShared({ progression: saved, copied })
     },
   })
 
@@ -128,6 +135,7 @@ export default function ProgressionsPage() {
             {message}
           </p>
         ) : null}
+        {shared ? <ShareNotice progression={shared.progression} copied={shared.copied} /> : null}
       </section>
       <ConfirmDialog
         open={pendingDelete !== null}

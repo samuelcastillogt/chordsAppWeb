@@ -5,10 +5,13 @@ import { useSearchParams } from "next/navigation"
 import { FormEvent, useMemo, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
+import PlanLimitNotice from "@/components/billing/PlanLimitNotice"
 import PlayerControls from "@/components/ui/PlayerControls"
 import TensionCurve from "@/components/analyzer/TensionCurve"
+import { track } from "@/lib/analytics"
 import { get, post } from "@/lib/api"
 import { useAuth } from "@/lib/auth/AuthProvider"
+import { isPlanLimitError } from "@/lib/billing"
 import { downloadSvgAsPng } from "@/lib/export"
 import { functionColor, functionLabel, splitChordInput } from "@/lib/music/theory"
 import { changedIndices } from "@/lib/music/progression"
@@ -40,7 +43,7 @@ const MAX_SONG_CHARS = 40_000
 type AnalysisResult = { parsed: Parsed; response: AnalyzeResponse }
 
 /** Parse + analyze pipeline shared by the main analysis and the A/B variant. */
-async function analyzeText(text: string, key: string): Promise<AnalysisResult> {
+async function analyzeText(text: string, key: string, placement = "analyzer"): Promise<AnalysisResult> {
   const symbols = splitChordInput(text)
   if (symbols.length < 2) throw new Error("Escribe al menos dos acordes, por ejemplo: Am F C G")
   const { results } = await post<{ results: ParsedChord[] }>("/api/v1/chords/parse", { symbols })
@@ -48,6 +51,7 @@ async function analyzeText(text: string, key: string): Promise<AnalysisResult> {
   const ignored = results.filter(result => !result.chord).map(result => result.input)
   if (recognized.length < 2) throw new Error("No reconocí suficientes acordes. Revisa la escritura (ej.: Bm, F#m7, D/F#, SOLm).")
   const response = await post<AnalyzeResponse>("/api/v1/analyze", { chords: recognized.map(item => item.input), tonality: key || undefined })
+  track("analyze", { placement, chords: recognized.length })
   return { parsed: { recognized, ignored }, response }
 }
 
@@ -102,7 +106,7 @@ export default function Analyzer() {
     queryKey: ["analysis", { text: variantText, key: analysis?.key.id ?? "" }],
     enabled: !!variant && !!analysis,
     retry: false,
-    queryFn: () => analyzeText(variantText, analysis!.key.id),
+    queryFn: () => analyzeText(variantText, analysis!.key.id, "variant"),
   })
   const variantAnalysis = variantQuery.data?.response.analysis
 
@@ -118,6 +122,7 @@ export default function Analyzer() {
       return items.length
     },
     onSuccess: count => {
+      track("save", { placement: "analyzer", count })
       setNotice(count > 1 ? "Original y variante guardadas en tu biblioteca." : "Guardada en tu biblioteca.")
       queryClient.invalidateQueries({ queryKey: ["progressions"] })
     },
@@ -473,7 +478,13 @@ export default function Analyzer() {
                         </Link>
                       </p>
                     ) : null}
-                    {saveMutation.isError ? <p className="text-sm text-fn-dominant">{(saveMutation.error as Error).message}</p> : null}
+                    {saveMutation.isError ? (
+                      isPlanLimitError(saveMutation.error) ? (
+                        <PlanLimitNotice message={(saveMutation.error as Error).message} placement="analyzer" />
+                      ) : (
+                        <p className="text-sm text-fn-dominant">{(saveMutation.error as Error).message}</p>
+                      )
+                    ) : null}
                   </div>
                 ) : null}
               </section>

@@ -42,3 +42,18 @@ h2 {
 .link {
   @apply transition-all duration-200;
 }
+
+/* Long-form text of the legal pages. */
+.legal h2 {
+  @apply mt-10 font-display text-2xl;
+}
+.legal p,
+.legal li {
+  @apply mt-3 leading-7 text-ink;
+}
+.legal ul {
+  @apply list-disc pl-6;
+}
+.legal a {
+  @apply font-semibold underline;
+}

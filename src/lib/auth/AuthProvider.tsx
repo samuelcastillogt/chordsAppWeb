@@ -6,6 +6,7 @@ import {
   GoogleAuthProvider,
   User as FirebaseUser,
   createUserWithEmailAndPassword,
+  deleteUser,
   onIdTokenChanged,
   sendEmailVerification,
   sendPasswordResetEmail,
@@ -15,7 +16,8 @@ import {
   updateProfile,
 } from "firebase/auth"
 
-import { ApiError, get, patch, setTokenProvider } from "@/lib/api"
+import { track } from "@/lib/analytics"
+import { ApiError, del, get, patch, setTokenProvider } from "@/lib/api"
 import { getFirebaseAuth } from "@/lib/auth/firebase"
 import { isFirebaseConfigured } from "@/lib/env"
 import { User } from "@/types"
@@ -40,12 +42,28 @@ type AuthContextValue = {
   /** Re-reads the Firebase account (after verifying the email) and retries with the API. */
   refreshSession: () => Promise<void>
   logout: () => Promise<void>
+  /** Re-reads the API user (e.g. after the plan changed). */
+  reloadUser: () => Promise<void>
+  /**
+   * Deletes the user's data in the API and the Firebase account. Firebase only allows it right
+   * after signing in, so an older session gets `RecentLoginRequiredError` before anything is deleted.
+   */
+  deleteAccount: () => Promise<void>
   dialogOpen: boolean
   openDialog: () => void
   closeDialog: () => void
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
+
+/** Firebase deletes an account only within a few minutes of signing in. */
+const RECENT_LOGIN_MS = 4 * 60 * 1000
+
+export class RecentLoginRequiredError extends Error {
+  constructor() {
+    super("Por seguridad, vuelve a iniciar sesión y luego elimina la cuenta.")
+  }
+}
 
 function requireAuth() {
   const auth = getFirebaseAuth()
@@ -117,11 +135,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       sessionProblem,
       signIn: async (email, password) => {
         await signInWithEmailAndPassword(requireAuth(), email.trim(), password)
+        track("login", { method: "password" })
         finishSignIn()
       },
       signUp: async (email, password, displayName) => {
         const auth = requireAuth()
         const credential = await createUserWithEmailAndPassword(auth, email.trim(), password)
+        track("sign_up", { method: "password" })
         const name = displayName?.trim()
         if (name) {
           await updateProfile(credential.user, { displayName: name })
@@ -132,7 +152,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await sendEmailVerification(credential.user)
       },
       signInWithGoogle: async () => {
-        await signInWithPopup(requireAuth(), new GoogleAuthProvider())
+        const result = await signInWithPopup(requireAuth(), new GoogleAuthProvider())
+        const created = result.user.metadata.creationTime === result.user.metadata.lastSignInTime
+        track(created ? "sign_up" : "login", { method: "google" })
         finishSignIn()
       },
       resetPassword: async email => {
@@ -153,6 +175,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logout: async () => {
         await signOut(requireAuth())
         queryClient.removeQueries({ queryKey: ["progressions"] })
+        queryClient.removeQueries({ queryKey: ["subscription"] })
+      },
+      reloadUser: async () => {
+        await syncWithApi(requireAuth().currentUser)
+      },
+      deleteAccount: async () => {
+        const auth = requireAuth()
+        const current = auth.currentUser
+        if (!current) return
+        const lastSignIn = Date.parse(current.metadata.lastSignInTime ?? "")
+        if (!lastSignIn || Date.now() - lastSignIn > RECENT_LOGIN_MS) throw new RecentLoginRequiredError()
+        await del("/api/v1/auth/me")
+        await deleteUser(current)
+        track("delete_account")
+        queryClient.clear()
       },
       dialogOpen,
       openDialog: () => setDialogOpen(true),

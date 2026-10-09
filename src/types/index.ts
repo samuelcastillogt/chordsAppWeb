@@ -59,6 +59,53 @@ export interface User {
   email: string | null
   displayName: string | null
   photoUrl: string | null
+  plan: PlanId
+}
+
+export type PlanId = "free" | "pro" | "lifetime"
+export type PricePeriod = "monthly" | "yearly" | "once"
+export type PriceRegion = "global" | "latam"
+
+export interface Price {
+  period: PricePeriod
+  amount: number
+  currency: string
+  region: PriceRegion
+}
+
+export interface Plan {
+  id: PlanId
+  name: string
+  tagline: string
+  /** Saved progressions allowed; null = unlimited. */
+  saveLimit: number | null
+  features: string[]
+  prices: Price[]
+}
+
+export interface PlansResponse {
+  /** "mock" while payments are simulated: nothing is charged. */
+  provider: string
+  plans: Plan[]
+}
+
+export interface Subscription {
+  plan: PlanId
+  planName: string
+  period: PricePeriod | null
+  provider: string | null
+  startedAt: string | null
+  renewsAt: string | null
+  saved: number
+  saveLimit: number | null
+}
+
+export interface CheckoutResponse {
+  provider: string
+  /** Hosted payment page of the real processor; null when the plan was activated directly (mock). */
+  checkoutUrl: string | null
+  activated: boolean
+  subscription: Subscription
 }
 
 export interface ParsedChord {
