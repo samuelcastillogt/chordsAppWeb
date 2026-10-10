@@ -5,7 +5,7 @@ import { useState } from "react"
 
 import ChordRow from "@/components/learn/ChordRow"
 import { usePlayer } from "@/lib/audio/usePlayer"
-import { CIRCLE_MAJORS, KEY_SIGNATURE, diatonicChords, keyName, relativeMinor } from "@/lib/music/keys"
+import { CIRCLE_MAJORS, KEY_SIGNATURE, diatonicChords, displayName, keyName, relativeMinor } from "@/lib/music/keys"
 
 const SIZE = 360
 const C = SIZE / 2
@@ -41,7 +41,7 @@ export default function CircleOfFifths() {
               role="button"
               tabIndex={0}
               aria-pressed={isSelected}
-              aria-label={`${keyName(major, "major")}, relativo ${relativeMinor(major)}m`}
+              aria-label={`${keyName(major, "major")}, relativa ${displayName(relativeMinor(major) + "m")}`}
               onClick={() => setSelected(index)}
               onKeyDown={event => (event.key === "Enter" || event.key === " ") && setSelected(index)}
               className="cursor-pointer outline-none"
@@ -56,10 +56,10 @@ export default function CircleOfFifths() {
                 fill={isSelected ? "#16132a" : "#fbf7ef"}
                 fontFamily="var(--font-mono)"
               >
-                {major}
+                {displayName(major)}
               </text>
               <text x={inner.x} y={inner.y + 5} textAnchor="middle" fontSize="13" fill={isSelected ? "#f2c14e" : "#c9c3da"} fontFamily="var(--font-mono)">
-                {relativeMinor(major)}m
+                {displayName(relativeMinor(major) + "m")}
               </text>
             </g>
           )
@@ -81,8 +81,8 @@ export default function CircleOfFifths() {
           </p>
         </div>
         <p className="text-sm text-ink-mute">
-          Sus vecinas en verde son {CIRCLE_MAJORS[(selected + 11) % 12]} (el IV) y {CIRCLE_MAJORS[(selected + 1) % 12]} (el V): comparten seis de sus siete
-          notas, por eso modular hacia ellas suena natural.
+          Sus vecinas en verde son {displayName(CIRCLE_MAJORS[(selected + 11) % 12])} (el IV) y {displayName(CIRCLE_MAJORS[(selected + 1) % 12])} (el V):
+          comparten seis de sus siete notas, por eso modular hacia ellas suena natural.
         </p>
         <ChordRow chords={chords} />
         <div className="flex flex-wrap gap-2">
@@ -97,7 +97,7 @@ export default function CircleOfFifths() {
             href={`/explorer?chords=${encodeURIComponent(cadence.map(c => c.chord).join(","))}&key=${encodeURIComponent(tonic)}`}
             className="inline-flex min-h-11 items-center rounded-md border border-hairline px-4 font-semibold hover:border-ink"
           >
-            Explorar en {tonic} →
+            Explorar en {displayName(tonic)} →
           </Link>
         </div>
       </div>

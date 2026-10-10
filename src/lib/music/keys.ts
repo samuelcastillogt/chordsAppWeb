@@ -6,16 +6,16 @@ export type HarmonicFn = "T" | "SD" | "D"
 /** Spanish note names for headings ("Sol mayor"). */
 export const LATIN: Record<string, string> = {
   C: "Do",
-  "C#": "Do#",
+  "C#": "Re♭",
   D: "Re",
-  "D#": "Re#",
+  "D#": "Mi♭",
   E: "Mi",
   F: "Fa",
   "F#": "Fa#",
   G: "Sol",
-  "G#": "Sol#",
+  "G#": "La♭",
   A: "La",
-  "A#": "La#",
+  "A#": "Si♭",
   B: "Si",
 }
 
@@ -31,11 +31,20 @@ export const KEY_SIGNATURE: Record<string, string> = {
   E: "4 sostenidos",
   B: "5 sostenidos",
   "F#": "6 sostenidos (o 6 bemoles)",
-  "C#": "5 bemoles (Re♭)",
-  "G#": "4 bemoles (La♭)",
-  "D#": "3 bemoles (Mi♭)",
-  "A#": "2 bemoles (Si♭)",
+  "C#": "5 bemoles",
+  "G#": "4 bemoles",
+  "D#": "3 bemoles",
+  "A#": "2 bemoles",
   F: "1 bemol",
+}
+
+/** How musicians write the flat-side keys: B♭ rather than A#, E♭ rather than D#… */
+const FLAT_NAMES: Record<string, string> = { "A#": "B♭", "D#": "E♭", "G#": "A♭", "C#": "D♭" }
+
+/** Display name of a chord or key id ("A#m" -> "B♭m"); ids stay in sharps for the API. */
+export function displayName(id: string): string {
+  const root = id.length > 1 && id[1] === "#" ? id.slice(0, 2) : id.slice(0, 1)
+  return (FLAT_NAMES[root] ?? root) + id.slice(root.length)
 }
 
 export function transposeNote(note: string, semitones: number): string {
@@ -81,5 +90,5 @@ export function diatonicChords(tonic: string, mode: Mode): DiatonicChord[] {
 
 /** "Sol mayor (G)", "Mi menor (Em)". */
 export function keyName(tonic: string, mode: Mode): string {
-  return `${LATIN[tonic]} ${mode === "major" ? "mayor" : "menor"} (${tonic}${mode === "minor" ? "m" : ""})`
+  return `${LATIN[tonic]} ${mode === "major" ? "mayor" : "menor"} (${displayName(tonic + (mode === "minor" ? "m" : ""))})`
 }

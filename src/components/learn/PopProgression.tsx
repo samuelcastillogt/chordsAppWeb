@@ -5,7 +5,7 @@ import { useState } from "react"
 
 import ChordRow from "@/components/learn/ChordRow"
 import { usePlayer } from "@/lib/audio/usePlayer"
-import { CIRCLE_MAJORS, LATIN, diatonicChords } from "@/lib/music/keys"
+import { CIRCLE_MAJORS, LATIN, diatonicChords, displayName } from "@/lib/music/keys"
 
 /** Orderings of the same four chords (indexes into the major key's degrees). */
 const ORDERS = [
@@ -41,7 +41,7 @@ export default function PopProgression() {
               className={`min-h-10 min-w-11 rounded-full border px-3 font-mono font-semibold ${tonic === major ? "border-primary bg-primary text-on-primary" : "border-hairline hover:border-ink"}`}
               title={`${LATIN[major]} mayor`}
             >
-              {major}
+              {displayName(major)}
             </button>
           ))}
         </div>

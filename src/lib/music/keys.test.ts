@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { diatonicChords, relativeMinor, triadNotes } from "./keys"
+import { diatonicChords, displayName, keyName, relativeMinor, triadNotes } from "./keys"
 
 describe("keys", () => {
   it("builds the diatonic chords of a major key", () => {
@@ -16,5 +16,14 @@ describe("keys", () => {
     expect(relativeMinor("E")).toBe("C#")
     expect(triadNotes("D", "")).toEqual(["D", "F#", "A"])
     expect(triadNotes("B", "dim")).toEqual(["B", "D", "F"])
+  })
+})
+
+describe("display names", () => {
+  it("writes flat-side keys with flats", () => {
+    expect(displayName("A#")).toBe("B♭")
+    expect(displayName("D#m")).toBe("E♭m")
+    expect(displayName("F#")).toBe("F#")
+    expect(keyName("A#", "major")).toBe("Si♭ mayor (B♭)")
   })
 })
