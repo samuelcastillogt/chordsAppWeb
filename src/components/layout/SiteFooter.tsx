@@ -13,6 +13,7 @@ export default function SiteFooter() {
           <Link href="/progresion-i-v-vi-iv">Progresión I–V–vi–IV</Link>
           <Link href="/precios">Precios</Link>
           <a href={`${SONGBOOK_URL}/?utm_source=chordweaver&utm_medium=referral&utm_campaign=footer`}>Cancionero Soda Stereo y Cerati</a>
+          <Link href="/opinion">Danos tu opinión</Link>
           <Link href="/privacidad">Privacidad</Link>
           <Link href="/terminos">Términos</Link>
           <Link href="/eliminar-cuenta">Eliminar cuenta</Link>

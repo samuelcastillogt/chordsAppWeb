@@ -33,6 +33,10 @@ export default function PrivacidadPage() {
           de facturación; nosotros no guardamos números de tarjeta.
         </li>
         <li>
+          <strong>Opiniones.</strong> Si nos escribes desde «Danos tu opinión»: tu mensaje, tu valoración, la página desde la que escribes y, si lo das o tienes
+          sesión iniciada, tu correo.
+        </li>
+        <li>
           <strong>Uso del sitio.</strong> Con Google Analytics (vía Firebase) medimos visitas y acciones como analizar, guardar o compartir, con datos del
           dispositivo y ubicación aproximada. No los usamos para publicidad personalizada.
         </li>
@@ -55,6 +59,7 @@ export default function PrivacidadPage() {
       <p>Solo con los proveedores que hacen funcionar el servicio, que procesan los datos por cuenta nuestra:</p>
       <ul>
         <li>Google Firebase (autenticación, base de datos Firestore y Analytics).</li>
+        <li>Sentry, para detectar errores técnicos (sin datos personales), si está activado.</li>
         <li>Vercel (servidor de la API) y GitHub Pages (sitio web).</li>
         <li>El procesador de pagos, cuando se active el cobro.</li>
       </ul>

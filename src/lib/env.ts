@@ -27,6 +27,8 @@ export const env = {
   contactEmail: process.env.NEXT_PUBLIC_CONTACT_EMAIL ?? "",
   /** Content of Search Console's HTML-tag verification (google-site-verification). */
   googleSiteVerification: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION ?? "",
+  /** Sentry project DSN for browser error monitoring; empty disables it. */
+  sentryDsn: process.env.NEXT_PUBLIC_SENTRY_DSN ?? "",
   /** host:port of the Firebase Auth emulator (e.g. "127.0.0.1:9099"); empty in production. */
   firebaseAuthEmulatorHost: process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST ?? "",
 } as const

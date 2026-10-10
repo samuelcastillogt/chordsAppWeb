@@ -20,6 +20,7 @@ export const PUBLIC_ROUTES: Array<{ path: string; changeFrequency: "weekly" | "m
   { path: "/circulo-de-quintas/", changeFrequency: "monthly", priority: 0.8 },
   { path: "/detector-de-tonalidad/", changeFrequency: "monthly", priority: 0.8 },
   { path: "/progresion-i-v-vi-iv/", changeFrequency: "monthly", priority: 0.8 },
+  { path: "/opinion/", changeFrequency: "yearly", priority: 0.3 },
   { path: "/privacidad/", changeFrequency: "yearly", priority: 0.2 },
   { path: "/terminos/", changeFrequency: "yearly", priority: 0.2 },
   { path: "/eliminar-cuenta/", changeFrequency: "yearly", priority: 0.2 },

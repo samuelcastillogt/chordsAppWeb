@@ -19,6 +19,7 @@ export type AnalyticsEvent =
   | "plan_limit_reached"
   | "cancel_subscription"
   | "delete_account"
+  | "feedback"
 
 type Params = Record<string, string | number | boolean | undefined>
 

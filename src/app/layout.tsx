@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import { Fraunces, Inter, JetBrains_Mono } from "next/font/google"
 
 import AnalyticsInit from "@/components/layout/AnalyticsInit"
+import Monitoring from "@/components/layout/Monitoring"
 import SiteFooter from "@/components/layout/SiteFooter"
 import SiteHeader from "@/components/layout/SiteHeader"
 import { env } from "@/lib/env"
@@ -46,6 +47,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <Providers>
           <AnalyticsInit />
+          <Monitoring />
           <SiteHeader />
           {children}
           <SiteFooter />
