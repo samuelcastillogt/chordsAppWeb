@@ -8,6 +8,9 @@ export default function SiteFooter() {
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-8 text-sm sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <p className="text-ink-mute">ChordWeaver · Entiende por qué suena así cualquier canción.</p>
         <nav aria-label="Pie de página" className="flex flex-wrap gap-x-5 gap-y-2 font-semibold">
+          <Link href="/circulo-de-quintas">Círculo de quintas</Link>
+          <Link href="/detector-de-tonalidad">Detector de tonalidad</Link>
+          <Link href="/progresion-i-v-vi-iv">Progresión I–V–vi–IV</Link>
           <Link href="/precios">Precios</Link>
           <a href={`${SONGBOOK_URL}/?utm_source=chordweaver&utm_medium=referral&utm_campaign=footer`}>Cancionero Soda Stereo y Cerati</a>
           <Link href="/privacidad">Privacidad</Link>
