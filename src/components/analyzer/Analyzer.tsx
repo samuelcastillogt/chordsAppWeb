@@ -9,7 +9,7 @@ import PlanLimitNotice from "@/components/billing/PlanLimitNotice"
 import PlayerControls from "@/components/ui/PlayerControls"
 import TensionCurve from "@/components/analyzer/TensionCurve"
 import { track } from "@/lib/analytics"
-import { get, post } from "@/lib/api"
+import { ApiError, get, post } from "@/lib/api"
 import { useAuth } from "@/lib/auth/AuthProvider"
 import { isPlanLimitError } from "@/lib/billing"
 import { downloadSvgAsPng } from "@/lib/export"
@@ -41,6 +41,16 @@ type SongFile = { name: string; song: StyleParseResponse; condensed: string[] }
 const MAX_FILE_BYTES = 200_000
 const MAX_SONG_CHARS = 40_000
 type AnalysisResult = { parsed: Parsed; response: AnalyzeResponse }
+
+class PartialSaveError extends ApiError {
+  constructor(
+    message: string,
+    status: number,
+    readonly savedCount: number,
+  ) {
+    super(message, status)
+  }
+}
 
 /** Parse + analyze pipeline shared by the main analysis and the A/B variant. */
 async function analyzeText(text: string, key: string, placement = "analyzer"): Promise<AnalysisResult> {
@@ -116,15 +126,30 @@ export default function Analyzer() {
 
   const saveMutation = useMutation({
     mutationFn: async (items: Array<{ name: string; chords: string[]; tonality: string }>) => {
-      for (const item of items) {
-        await post<Progression>("/api/v1/progressions", { ...item, source: source?.slice(0, 200) ?? null })
+      let savedCount = 0
+      try {
+        for (const item of items) {
+          await post<Progression>("/api/v1/progressions", { ...item, source: source?.slice(0, 200) ?? null })
+          savedCount += 1
+        }
+      } catch (error) {
+        if (!savedCount) throw error
+        const detail = error instanceof Error ? error.message : "No se pudo completar el guardado."
+        const status = error instanceof ApiError ? error.status : 0
+        throw new PartialSaveError(`Se guardó la progresión original, pero no la variante. ${detail}`, status, savedCount)
       }
-      return items.length
+      return savedCount
     },
     onSuccess: count => {
       track("save", { placement: "analyzer", count })
       setNotice(count > 1 ? "Original y variante guardadas en tu biblioteca." : "Guardada en tu biblioteca.")
       queryClient.invalidateQueries({ queryKey: ["progressions"] })
+    },
+    onError: error => {
+      if (error instanceof PartialSaveError) {
+        track("save", { placement: "analyzer", count: error.savedCount, partial: true })
+        queryClient.invalidateQueries({ queryKey: ["progressions"] })
+      }
     },
   })
 

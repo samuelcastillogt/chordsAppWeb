@@ -15,10 +15,15 @@ export interface CriterionBreakdown {
   detail: string
 }
 
+export type SuggestionIntent = "safe" | "interesting" | "bold"
+
 export interface Connection {
+  source: string
   target: string
   score: number
+  intent: SuggestionIntent
   category: "natural" | "media" | "tensa" | "extrema"
+  explanation: string
   breakdown: Record<string, CriterionBreakdown>
   /** Present when the suggestion comes from a band style: score is then the blend. */
   engineScore?: number
@@ -36,6 +41,7 @@ export interface StyleEvidence {
 }
 
 export interface ConnectionsResponse {
+  contractVersion: "1"
   source: string
   connections: Connection[]
   total: number
@@ -144,10 +150,6 @@ export interface KeyInfo {
   detected: boolean
 }
 
-export interface AnalyzeConnection extends Connection {
-  source: string
-}
-
 export interface TensionPoint {
   from: string
   to: string
@@ -160,7 +162,7 @@ export interface AnalyzeResponse {
     chords: string[]
     key: KeyInfo
     degrees: Degree[]
-    connections: AnalyzeConnection[]
+    connections: Connection[]
     tensionCurve: TensionPoint[]
     averageScore: number
     suggestions: string[]
@@ -227,6 +229,7 @@ export interface SavedStyle {
 }
 
 export interface StyleSuggestResponse {
+  contractVersion: "1"
   source: string
   key: string
   context: string[]

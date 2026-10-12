@@ -119,7 +119,7 @@ function Explorer() {
     error: connectionsError,
   } = useQuery<ConnectionsResponse>({
     queryKey: ["connections", selectedChord, tonality],
-    queryFn: () => get<ConnectionsResponse>(`/api/v1/chords/${selectedChord}/connections`, { tonality, min_score: 0, max_results: 60 }),
+    queryFn: () => get<ConnectionsResponse>(`/api/v1/chords/${encodeURIComponent(selectedChord)}/connections`, { tonality, min_score: 0, max_results: 60 }),
     enabled: !!selectedChord,
   })
 
@@ -140,12 +140,11 @@ function Explorer() {
         maxResults: 60,
       }),
     enabled: !!activeStyle && !!selectedChord,
-    placeholderData: previous => previous,
   })
 
   const { data: targetChord } = useQuery<Chord>({
     queryKey: ["chord", selectedChord],
-    queryFn: () => get<Chord>(`/api/v1/chords/${selectedChord}`),
+    queryFn: () => get<Chord>(`/api/v1/chords/${encodeURIComponent(selectedChord)}`),
     enabled: !!selectedChord,
   })
 
@@ -364,7 +363,7 @@ function Explorer() {
 
   const analysis = analyzeMutation.data?.analysis
   // With a band style the backend already blended its habits with the engine's scores.
-  const styledConnections = activeStyle ? styleData?.connections : undefined
+  const styledConnections = activeStyle && !styleError ? styleData?.connections : undefined
   const rankedSuggestions = useMemo(
     () => rankSuggestions(styledConnections ?? connectionsData?.connections ?? [], suggestionMode, stylePreset),
     [styledConnections, connectionsData, suggestionMode, stylePreset],
@@ -602,7 +601,7 @@ function Explorer() {
             suggestions={rankedSuggestions}
             mode={suggestionMode}
             preset={stylePreset}
-            styleName={activeStyle?.profile.name}
+            styleName={styleData && !styleError ? activeStyle?.profile.name : undefined}
             onModeChange={setSuggestionMode}
             onPresetChange={setStylePreset}
             onSelect={selectChord}

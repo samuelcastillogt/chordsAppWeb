@@ -1,4 +1,4 @@
-import { Connection } from "@/types"
+import { Connection, SuggestionIntent } from "@/types"
 
 /** The seven criteria the backend engine scores every chord change with (raw 0-100). */
 export const CRITERIA = ["shared_notes", "voice_movement", "circle_distance", "transformation", "tonal_function", "dominant_chain", "glue_magic"] as const
@@ -25,11 +25,11 @@ export const SUGGESTION_MODES: Array<{ id: SuggestionMode; label: string; hint: 
   { id: "bold", label: "Atrevida", hint: "Tensión y sorpresa: úsalas con intención." },
 ]
 
-const MODE_CATEGORIES: Record<SuggestionMode, Connection["category"][]> = {
-  all: ["natural", "media", "tensa", "extrema"],
-  safe: ["natural"],
-  interesting: ["media"],
-  bold: ["tensa", "extrema"],
+const LEGACY_CATEGORY_INTENT: Record<Connection["category"], SuggestionIntent> = {
+  natural: "safe",
+  media: "interesting",
+  tensa: "bold",
+  extrema: "bold",
 }
 
 /** Style presets re-weight the same criteria; "balanced" keeps the engine's own weights. */
@@ -61,9 +61,8 @@ export type RankedSuggestion = Connection & { rankScore: number; explanation: st
 
 /** Filters by intention mode and orders by the style preset score. */
 export function rankSuggestions(connections: Connection[], mode: SuggestionMode, preset: StylePreset, limit = 18): RankedSuggestion[] {
-  const allowed = MODE_CATEGORIES[mode]
   return connections
-    .filter(connection => allowed.includes(connection.category))
+    .filter(connection => mode === "all" || (connection.intent ?? LEGACY_CATEGORY_INTENT[connection.category]) === mode)
     .map(connection => ({ ...connection, rankScore: styleScore(connection, preset), explanation: explainConnection(connection) }))
     .sort((a, b) => b.rankScore - a.rankScore || a.target.localeCompare(b.target))
     .slice(0, limit)
@@ -72,6 +71,7 @@ export function rankSuggestions(connections: Connection[], mode: SuggestionMode,
 /** Short human explanation: the details of the two criteria that contribute most. */
 export function explainConnection(connection: Connection): string {
   if (connection.style) return connection.style.evidence
+  if (connection.explanation) return connection.explanation
   return Object.entries(connection.breakdown)
     .filter(([, item]) => item.weighted > 0 && item.detail)
     .sort(([, a], [, b]) => b.weighted - a.weighted)
