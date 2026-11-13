@@ -110,3 +110,60 @@ export function playSequence(chordNotes: string[][], options: PlaybackOptions = 
   tick(0)
   return { stop: () => !stopped && finish() }
 }
+
+export function midiToFrequency(midi: number): number {
+  return 440 * 2 ** ((midi - 69) / 12)
+}
+
+/** Strums exact pitches (low to high) with a plucked envelope, like a pick across the strings. */
+export function strumMidis(
+  midis: number[],
+  startAt: number,
+  context: AudioContext,
+  destination: AudioNode = context.destination,
+  duration = 1.8,
+  strum = 0.035,
+) {
+  const level = 0.5 / Math.max(midis.length, 3)
+  midis.forEach((midi, index) => {
+    const oscillator = context.createOscillator()
+    const gain = context.createGain()
+    const at = startAt + index * strum
+    oscillator.type = "triangle"
+    oscillator.frequency.value = midiToFrequency(midi)
+    gain.gain.setValueAtTime(0.0001, at)
+    gain.gain.exponentialRampToValueAtTime(level, at + 0.006)
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + duration)
+    oscillator.connect(gain).connect(destination)
+    oscillator.start(at)
+    oscillator.stop(at + duration + 0.05)
+  })
+}
+
+/** Strums each voicing in turn (`strum: 0` plays block chords, as on a piano); stoppable, and reports the index sounding through `onStep`. */
+export function playStrums(
+  voicings: number[][],
+  { gap = 1.25, strum = 0.035, onStep }: { gap?: number; strum?: number; onStep?: (index: number | null) => void } = {},
+): Playback {
+  const context = getAudioContext()
+  if (!context || voicings.length === 0) return { stop: () => undefined }
+  const master = context.createGain()
+  master.connect(context.destination)
+  const timers: number[] = []
+  let stopped = false
+  const start = context.currentTime + 0.03
+  voicings.forEach((midis, index) => {
+    strumMidis(midis, start + index * gap, context, master, Math.min(gap * 1.4, 2.2), strum)
+    timers.push(window.setTimeout(() => onStep?.(index), index * gap * 1000))
+  })
+  const finish = () => {
+    if (stopped) return
+    stopped = true
+    timers.forEach(timer => window.clearTimeout(timer))
+    master.gain.setTargetAtTime(0, context.currentTime, 0.04)
+    window.setTimeout(() => master.disconnect(), 400)
+    onStep?.(null)
+  }
+  timers.push(window.setTimeout(finish, (voicings.length * gap + 0.6) * 1000))
+  return { stop: finish }
+}

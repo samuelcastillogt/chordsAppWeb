@@ -3,12 +3,12 @@ import type { Metadata } from "next"
 import { absoluteUrl } from "@/lib/site"
 
 export const metadata: Metadata = {
-  title: "Piano interactivo: encuentra el acorde",
-  description: "Toca notas en el piano y descubre qué acordes las contienen. Ideal para sacar canciones de oído.",
+  title: "Piano: qué acorde estoy tocando",
+  description: "Toca un acorde en el piano (o con tu teclado MIDI) y descubre cuál es, sus inversiones y cómo pasar al siguiente moviendo lo mínimo.",
   alternates: { canonical: absoluteUrl("/piano/") },
   openGraph: {
-    title: "Piano interactivo: encuentra el acorde · ChordWeaver",
-    description: "Toca notas en el piano y descubre qué acordes las contienen. Ideal para sacar canciones de oído.",
+    title: "Piano: qué acorde estoy tocando · ChordWeaver",
+    description: "Toca un acorde en el piano (o con tu teclado MIDI) y descubre cuál es, sus inversiones y cómo pasar al siguiente moviendo lo mínimo.",
     url: absoluteUrl("/piano/"),
   },
 }

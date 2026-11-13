@@ -3,12 +3,12 @@ import type { Metadata } from "next"
 import { absoluteUrl } from "@/lib/site"
 
 export const metadata: Metadata = {
-  title: "Mástil de guitarra interactivo",
-  description: "Mira dónde están las notas de cualquier acorde en el mástil de la guitarra, con los intervalos de cada posición.",
+  title: "Mástil de guitarra: qué acorde estoy tocando",
+  description: "Pon los dedos en el mástil y descubre qué acorde es, en qué otras posiciones tocarlo y qué acorde sigue con el menor movimiento de la mano.",
   alternates: { canonical: absoluteUrl("/fretboard/") },
   openGraph: {
-    title: "Mástil de guitarra interactivo · ChordWeaver",
-    description: "Mira dónde están las notas de cualquier acorde en el mástil de la guitarra, con los intervalos de cada posición.",
+    title: "Mástil de guitarra: qué acorde estoy tocando · ChordWeaver",
+    description: "Pon los dedos en el mástil y descubre qué acorde es, en qué otras posiciones tocarlo y qué acorde sigue con el menor movimiento de la mano.",
     url: absoluteUrl("/fretboard/"),
   },
 }

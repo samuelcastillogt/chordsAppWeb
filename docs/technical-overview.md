@@ -48,6 +48,16 @@ The explorer uses these backend endpoints:
 - The analyzer's substitutions no longer rewrite the input: they build variant B on top of A. B is analysed in A's key with the same React Query pipeline (`analyzeText`), and `CompareAB` shows both, the average-fluency delta, the changed degrees, and actions to keep B, save A and B (two progressions, the second suffixed "(variante)") or discard.
 - `src/lib/export.ts` serialises the on-screen SVG (explicit size, paper background, CSS font variables replaced by real font stacks) to SVG or a 2x PNG through a canvas. `src/lib/audio/midi.ts` writes a format-0 MIDI file (480 PPQ, piano, one block chord per two beats at the current tempo).
 
+## Instruments (`/fretboard`, `/piano`)
+
+Both pages answer the same three questions for a player, entirely client-side except for the engine's `/connections`: what am I playing, where else can I play it, and what comes next with the least movement.
+
+- `src/lib/music/identify.ts → identifyMidis` names a chord from sounding MIDI notes: the played pitch classes must all belong to the chord, and every chord tone must sound (the fifth may be left out). Complete chords rank first, then root in the bass, then simpler types; the lowest note gives the slash bass and the inversion number. Both instruments use it.
+- `src/lib/music/guitar.ts`: shapes are one fret per string (`null` muted, 0 open), written in tab notation (`x32010`, `x-10-12-12-11-10`). `chordVoicings` searches every 4-fret window for playable root-position voicings (contiguous strings, ≥4 strings or 2 for power chords, a stretch of 4 frets, ≤4 fingers counting barres and partial barres, open strings only in open position) and keeps the best per hand position; the scoring was tuned so the textbook shapes win (C `x32010`/`x35553`, D `xx0232`, Am `x02210`, Bm `x24432`). `nearestVoicing` picks the target voicing with the least slide and fewest strings changing.
+- `src/lib/music/piano.ts`: `chordInversions` stacks close-position inversions near a bass; `smoothestVoicing` picks the inversion/octave of the next chord with the fewest semitones of total movement (`voiceMoves` pairs voices by position when sizes match, otherwise holds common tones, pairs the rest by proximity and marks notes added or released).
+- `GuitarNeck` and `PianoKeyboard` render the instrument with a ghost layer (dashed = where the next chord's notes go, green ring = note that stays) and keep the hand in view on narrow screens. Sound uses `strumMidis`/`playStrums` in `src/lib/audio/synth.ts` with the exact pitches (strummed on guitar, block chords on piano). The piano also listens to the computer keyboard and to Web MIDI (Chrome/Edge): keys held together form the chord, which stays after release.
+- Shapes and notes are mirrored in the URL (`?forma=`, `?notas=`) so a voicing can be shared; the journey links to the analyzer and the explorer with the chord ids.
+
 ## Screen Architecture
 
 `src/app/explorer/page.tsx` owns the main application state:
