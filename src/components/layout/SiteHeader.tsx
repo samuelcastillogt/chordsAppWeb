@@ -9,6 +9,7 @@ import { useAuth } from "@/lib/auth/AuthProvider"
 const LINKS = [
   { href: "/", label: "Analizar" },
   { href: "/explorer", label: "Explorar" },
+  { href: "/mapa", label: "Mapa de canción" },
   { href: "/estilo", label: "Estilo de banda" },
   { href: "/fretboard", label: "Mástil" },
   { href: "/piano", label: "Piano" },

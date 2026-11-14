@@ -13,6 +13,7 @@ export function absoluteUrl(path = "/"): string {
 export const PUBLIC_ROUTES: Array<{ path: string; changeFrequency: "weekly" | "monthly" | "yearly"; priority: number }> = [
   { path: "/", changeFrequency: "weekly", priority: 1 },
   { path: "/explorer/", changeFrequency: "weekly", priority: 0.9 },
+  { path: "/mapa/", changeFrequency: "monthly", priority: 0.8 },
   { path: "/estilo/", changeFrequency: "monthly", priority: 0.7 },
   { path: "/fretboard/", changeFrequency: "monthly", priority: 0.6 },
   { path: "/piano/", changeFrequency: "monthly", priority: 0.6 },

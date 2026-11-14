@@ -48,6 +48,16 @@ The explorer uses these backend endpoints:
 - The analyzer's substitutions no longer rewrite the input: they build variant B on top of A. B is analysed in A's key with the same React Query pipeline (`analyzeText`), and `CompareAB` shows both, the average-fluency delta, the changed degrees, and actions to keep B, save A and B (two progressions, the second suffixed "(variante)") or discard.
 - `src/lib/export.ts` serialises the on-screen SVG (explicit size, paper background, CSS font variables replaced by real font stacks) to SVG or a 2x PNG through a canvas. `src/lib/audio/midi.ts` writes a format-0 MIDI file (480 PPQ, piano, one block chord per two beats at the current tempo).
 
+## Song map (`/mapa`)
+
+The explorer's mandala answers "what can follow this chord". The song map answers "what is the harmony of this song", on the same geometry (`src/lib/music/mandala.ts`).
+
+- Input: a .txt/ChordPro/ASCII tab (or pasted text) goes to `POST /style/parse`, which returns sections and catalog chord ids. The analyzer stores the last uploaded song in `sessionStorage` (`storeSongHandoff`) so the map can open it directly.
+- `src/lib/music/songmap.ts` (pure, tested): `songSteps` maps every chord to its mandala node; `nodeUsage` counts occurrences per node and section; `songTransitions` counts moves between different nodes; `harmonicProfile` splits the song into tonic / subdominant / dominant / secondary dominants / borrowed / outside by occurrences; `moveName` names well-known moves by degree (authentic, plagal, deceptive, mixolydian cadences, ii–V, secondary dominant resolving…); `songLoops` finds repeating 3–4 chord cycles and names famous ones in any rotation (pop I–V–vi–IV, 50s, Andalusian, ii–V–I, ♭VI–♭VII–I…); `spellChord` writes flats or sharps for the key.
+- Each section with at least three different chords is analysed on its own (`POST /analyze`). A section key in the parallel key's petal is reported as borrowing; any other key outside the song's petal is a modulation and gets its own green petal.
+- `SongMandala` draws node size by use (square root, so one chord can't swallow the rest), arrows by frequency coloured by the function of the chord they land on, unused chords as faint dots, a section filter, a selected chord's own paths, and the playing chord and move during playback (`usePlayer`, repeats collapsed). `SongInsights` puts the same data in words.
+- Access: anyone can open the page and load the built-in example; uploading or pasting a song requires a Pro or lifetime plan (`user.plan !== "free"`). The check is in the interface only: `/style/parse` and `/analyze` stay public because the analyzer uses them too.
+
 ## Instruments (`/fretboard`, `/piano`)
 
 Both pages answer the same three questions for a player, entirely client-side except for the engine's `/connections`: what am I playing, where else can I play it, and what comes next with the least movement.

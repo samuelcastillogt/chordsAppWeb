@@ -16,6 +16,7 @@ import { downloadSvgAsPng } from "@/lib/export"
 import { functionColor, functionLabel, splitChordInput } from "@/lib/music/theory"
 import { changedIndices } from "@/lib/music/progression"
 import { MAX_ANALYZED_CHORDS, condenseSong } from "@/lib/music/song"
+import { storeSongHandoff } from "@/lib/music/songmap"
 import { usePlayer } from "@/lib/audio/usePlayer"
 import { AnalyzeResponse, Chord, Degree, ParsedChord, Progression, StyleParseResponse, TablatureResponse } from "@/types"
 
@@ -184,6 +185,7 @@ export default function Analyzer() {
       }
       const condensed = condenseSong(song.sections.length ? song.sections : [{ name: "", chords: song.chords }])
       setSongFile({ name: file.name, song, condensed })
+      storeSongHandoff(title, text)
       setInput(condensed.join(" "))
       if (!saveName) setSaveName(title)
       // The whole song decides the key: it is more reliable than the condensed summary alone.
@@ -775,6 +777,10 @@ function SongFileCard({ file, onClear }: { file: SongFile; onClear: () => void }
         </button>
       </div>
       {condensedNote ? <p className="mt-1 text-xs">{condensedNote}</p> : null}
+      <Link href="/mapa" className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-on-primary underline underline-offset-4">
+        Ver su mapa armónico completo, sección por sección
+        <span className="rounded-full bg-surface-violet-soft px-1.5 text-[10px] text-primary no-underline">PRO</span>
+      </Link>
       {song.sections.length ? (
         <details className="mt-2 text-xs">
           <summary className="cursor-pointer font-semibold text-on-primary">Ver estructura ({song.sections.length} secciones)</summary>
